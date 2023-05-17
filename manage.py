@@ -63,13 +63,13 @@ t1 = threading.Thread(target=peer_to_peer.awaiting_received_node, daemon=True)
 t2 = threading.Thread(target=peer_to_peer.awaiting_received_chain, daemon=True)
 t3 = threading.Thread(target=peer_to_peer.awaiting_transaction_broadcast, daemon=True)
 # thread exclusive for testing, heartbeat
-t4 = threading.Thread(target=peer_to_peer.tester_spitter, daemon=True)
+# t4 = threading.Thread(target=peer_to_peer.tester_spitter, daemon=True)
 
 t1.start()
 t2.start()
 t3.start()
 # thread exclusive for testing, heartbeat
-t4.start()
+# t4.start()
 
 cli = FlaskGroup(create_app=create_app, params={})
 

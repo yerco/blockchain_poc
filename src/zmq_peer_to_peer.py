@@ -223,7 +223,7 @@ class ZMQPeerToPeer(PeerToPeer):
                             db.session.rollback()
 
     # this is useless but for testing
-    def spitter(self):
+    def tester_spitter(self):
         counter = 0
         with self.app.app_context():
             while True:

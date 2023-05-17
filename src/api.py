@@ -58,11 +58,11 @@ class TransactionsList(Resource):
         }
         transaction = Transaction(public_key=self.public_key, private_key=self.private_key, data=data)
         peer_to_peer = FactoryPeerToPeer.create(current_app, current_app.config['COMM'])
-        transactions = Transaction.query.all()
         if current_app.config['COMM'] == 'zmq':
             db.session.add(transaction)
             db.session.commit()
             peer_to_peer.broadcast(peer_to_peer.transaction_publisher, transaction.as_dict())
+            transactions = Transaction.query.all()
             # for zmq we start mining here immediately
             # check if the number of transactions is equal to the number of transactions that can be mined
             if len(transactions) >= current_app.config['TRANSACTIONS_AMOUNT']:
