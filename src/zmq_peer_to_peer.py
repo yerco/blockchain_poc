@@ -137,16 +137,6 @@ class ZMQPeerToPeer(PeerToPeer):
     def receive_node(self):
         socks = self.poller.sockets
 
-        # # Check if there are any new subscribers to add
-        # for node_sub_socket in self.node_sub_sockets:
-        #     if node_socks.get(node_sub_socket) == zmq.POLLIN:
-        #         new_node_sub = self.context.socket(zmq.SUB)
-        #         new_node_sub.connect(node_sub_socket.getsockopt(zmq.LAST_ENDPOINT))
-        #         # here is the double subscription
-        #         new_node_sub.setsockopt(zmq.SUBSCRIBE, b'')
-        #         self.node_sub_sockets.append(new_node_sub)
-        #         self.poller.register(new_node_sub, zmq.POLLIN)
-
         # Handle incoming messages from all subscribed sockets
         for sock in socks:
             for node_sub_socket in self.node_sub_sockets:

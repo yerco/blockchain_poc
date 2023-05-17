@@ -36,6 +36,9 @@ if app.config['FIRST_NODE'] != app.config['THIS_NODE']:
     if blockchain.add_node_at(first_node, this_node) is False:
         print('Could not post to first node, find another alternative as first node.')
     else:
+        # here this_node has an ID
+        _this_node = Node.query.filter_by(address=this_node.address).first()
+        peer_to_peer.broadcast(peer_to_peer.node_publisher, _this_node.as_dict())
         available_nodes = blockchain.get_nodes_from(first_node)
         registered_nodes = Node.query.all()
         _registered_nodes = []

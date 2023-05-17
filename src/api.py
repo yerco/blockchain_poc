@@ -121,6 +121,8 @@ class NodesList(Resource):
                 # the node was added successfully, we publish it to the other nodes
                 if current_app.config['COMM'] == 'zmq':
                     peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
+                    peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
+                    peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
                 else:
                     peer_to_peer.broadcast(peer_to_peer.publisher, new_node.as_dict(), topic='node')
                 return {'message': f'{current_app.config["THIS_NODE"]} now knows node {address}!'}, 200
