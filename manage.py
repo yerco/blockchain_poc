@@ -77,9 +77,9 @@ else:
     else:
         print('Genesis block already exists.')
 
-t1 = threading.Thread(target=peer_to_peer.awaiting_received_node, daemon=True)
-t2 = threading.Thread(target=peer_to_peer.awaiting_received_chain, daemon=True)
-t3 = threading.Thread(target=peer_to_peer.awaiting_transaction_broadcast, daemon=True)
+t1 = threading.Thread(target=peer_to_peer.awaiting_received_node)
+t2 = threading.Thread(target=peer_to_peer.awaiting_received_chain)
+t3 = threading.Thread(target=peer_to_peer.awaiting_transaction_broadcast)
 # thread exclusive for testing, heartbeat
 # t4 = threading.Thread(target=peer_to_peer.tester_spitter, daemon=True)
 

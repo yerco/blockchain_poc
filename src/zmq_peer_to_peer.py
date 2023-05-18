@@ -130,49 +130,48 @@ class ZMQPeerToPeer(PeerToPeer):
                         print(f'Transaction: {transaction_id} is not valid.')
 
     def receive_node(self):
-        socks = self.poller.sockets
+        socks = dict(self.poller.poll())
 
         # Handle incoming messages from all subscribed sockets
-        for sock in socks:
-            for node_sub_socket in self.node_sub_sockets:
-                if node_sub_socket in sock:
-                    node: dict = json.loads(node_sub_socket.recv_json())
-                    received_node = Node(address=node['address'])
-                    if node['id']:
-                        received_node.id = node['id']
-                    print(f'{received_node.id}, {received_node.address} arrived to {self.app.config["THIS_NODE"]}')
-                    try:
-                        existing_node = Node.query.filter_by(address=received_node.address).all()
-                        if len(existing_node) >= 1:
-                            print(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
-                            continue
-                            # raise Exception(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
-                        # TODO check if it's necessary to swap the ids
-                        # elif len(existing_node) == 1:
-                        #     temp = existing_node.id
-                        #     existing_node.id = received_node.id
-                        #     received_node.id = temp
-                        #     # here happens the swap
-                        #     db.session.add(existing_node)
-                        #     db.session.commit()
-                        #     print(f'Node: {received_node.id}, {received_node.address} already registered.')
+        for node_sub_socket in self.node_sub_sockets:
+            if node_sub_socket in socks:
+                node: dict = json.loads(node_sub_socket.recv_json())
+                received_node = Node(address=node['address'])
+                if node['id']:
+                    received_node.id = node['id']
+                print(f'{received_node.id}, {received_node.address} arrived to {self.app.config["THIS_NODE"]}')
+                try:
+                    existing_node = Node.query.filter_by(address=received_node.address).all()
+                    if len(existing_node) >= 1:
+                        print(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
+                        # continue
+                        # raise Exception(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
+                    # TODO check if it's necessary to swap the ids
+                    # elif len(existing_node) == 1:
+                    #     temp = existing_node.id
+                    #     existing_node.id = received_node.id
+                    #     received_node.id = temp
+                    #     # here happens the swap
+                    #     db.session.add(existing_node)
+                    #     db.session.commit()
+                    #     print(f'Node: {received_node.id}, {received_node.address} already registered.')
+                    else:
+                        # Fresh node
+                        if received_node.id and received_node.id != 'None':
+                            db.session.add(received_node)
+                            db.session.commit()
+                            print(f'Node: {received_node.id}, {received_node.address} added.')
+                            self.subscribe_to_node(received_node)
+                            print(f'{self.app.config["THIS_NODE"]} subscribed to {received_node.address}')
                         else:
-                            # Fresh node
-                            if received_node.id and received_node.id != 'None':
-                                db.session.add(received_node)
-                                db.session.commit()
-                                print(f'Node: {received_node.id}, {received_node.address} added.')
-                                self.subscribe_to_node(received_node)
-                                print(f'{self.app.config["THIS_NODE"]} subscribed to {received_node.address}')
-                            else:
-                                print(f'{self.app.config["THIS_NODE"]} did not receive an ID from {received_node.address}')
-                    except SQLAlchemyError as e:
-                        # TODO make it more elegant instead of just spit the exception
-                        print(f'Node {received_node.id}, {received_node.address} could not be added: ', e)
-                        db.session.rollback()
-                    except Exception as e:
-                        print(f'A problem occurred ', e)
-                        # raise Exception(f'A problem occurred ', e)
+                            print(f'{self.app.config["THIS_NODE"]} did not receive an ID from {received_node.address}')
+                except SQLAlchemyError as e:
+                    # TODO make it more elegant instead of just spit the exception
+                    print(f'Node {received_node.id}, {received_node.address} could not be added: ', e)
+                    db.session.rollback()
+                except Exception as e:
+                    print(f'A problem occurred ', e)
+                    # raise Exception(f'A problem occurred ', e)
 
     def receive_chain(self):
         socks = self.poller.sockets
