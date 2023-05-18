@@ -39,30 +39,25 @@ class ZMQPeerToPeer(PeerToPeer):
         self.transaction_publisher = self.set_publisher(self.broadcast_transaction_port)
 
     def subscribe_to_node(self, node: Node) -> bool:
-        if node.address != self.app.config['THIS_NODE']:
-            try:
-                node_subscriber = self.set_subscriber(node.address, self.broadcast_nodes_port)
-                self.node_sub_sockets.append(node_subscriber)
-                self.poller.register(node_subscriber, zmq.POLLIN)
-                self.num_of_subscribers += 1
-                chain_subscriber = self.set_subscriber(node.address, self.broadcast_chain_port)
-                self.chain_sub_sockets.append(chain_subscriber)
-                self.poller.register(chain_subscriber, zmq.POLLIN)
-                self.num_of_subscribers += 1
-                transaction_subscriber = self.set_subscriber(node.address, self.broadcast_transaction_port)
-                self.transaction_sub_sockets.append(transaction_subscriber)
-                self.poller.register(transaction_subscriber, zmq.POLLIN)
-                self.num_of_subscribers += 1
-                print(f'Node: {self.app.config["THIS_NODE"]} subscribed to {node.address}')
-                return True
-            except zmq.error.ZMQError as e:
-                print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
-                return False
-            except Exception as e:
-                print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
-                return False
-        else:
-            print(f'THIS node: {node.id}, {node.address} is trying to subscribe to itself!')
+        try:
+            node_subscriber = self.set_subscriber(node.address, self.broadcast_nodes_port)
+            self.node_sub_sockets.append(node_subscriber)
+            self.poller.register(node_subscriber, zmq.POLLIN)
+            self.num_of_subscribers += 1
+            chain_subscriber = self.set_subscriber(node.address, self.broadcast_chain_port)
+            self.chain_sub_sockets.append(chain_subscriber)
+            self.poller.register(chain_subscriber, zmq.POLLIN)
+            self.num_of_subscribers += 1
+            transaction_subscriber = self.set_subscriber(node.address, self.broadcast_transaction_port)
+            self.transaction_sub_sockets.append(transaction_subscriber)
+            self.poller.register(transaction_subscriber, zmq.POLLIN)
+            self.num_of_subscribers += 1
+            return True
+        except zmq.error.ZMQError as e:
+            print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
+            return False
+        except Exception as e:
+            print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
             return False
 
     def set_publisher(self, port):
@@ -83,7 +78,7 @@ class ZMQPeerToPeer(PeerToPeer):
 
     def broadcast(self, publisher, data, topic=None) -> bool:
         try:
-            _data = json.dumps(data, sort_keys=True, ensure_ascii=False)  # .encode()
+            _data = json.dumps(data, sort_keys=True, ensure_ascii=False)
             publisher.send_json(_data)
             print(f'Just broadcast: {_data}')
             return True

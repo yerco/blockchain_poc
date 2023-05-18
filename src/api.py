@@ -3,9 +3,9 @@ import os
 from flask import Blueprint, request, current_app
 from flask_restx import Resource, Api, fields
 from fastecdsa.keys import import_key
+from http import HTTPStatus
 
 from src import db
-from src.blockchain import Blockchain
 from src.models import Block, Node, Transaction
 from src.factory_peer_to_peer import FactoryPeerToPeer
 from src.kafka_peer_to_peer import create_kafka
@@ -58,36 +58,18 @@ class TransactionsList(Resource):
         }
         transaction = Transaction(public_key=self.public_key, private_key=self.private_key, data=data)
         peer_to_peer = FactoryPeerToPeer.create(current_app, current_app.config['COMM'])
-        if current_app.config['COMM'] == 'zmq':
-            db.session.add(transaction)
-            db.session.commit()
-            peer_to_peer.broadcast(peer_to_peer.transaction_publisher, transaction.as_dict())
-            transactions = Transaction.query.all()
-            # for zmq we start mining here immediately
-            # check if the number of transactions is equal to the number of transactions that can be mined
-            if len(transactions) >= current_app.config['TRANSACTIONS_AMOUNT']:
-                # start the mining process
-                blockchain = Blockchain(current_app)
-                # done sequentially, TODO: do it in parallel otherwise the POST can be hung for a long time
-                block = blockchain.proof_of_work()
-                # add the block to the blockchain
-                db.session.add(block)
-                db.session.commit()
-                blocks = blockchain.get_blocks_as_list_of_dict()
-                peer_to_peer.broadcast(peer_to_peer.chain_publisher, blocks)
-                db.session.query(Transaction).delete()
-                db.session.commit()
-        else:
-            peer_to_peer.broadcast(peer_to_peer.publisher, transaction.as_dict(), topic='transaction')
+        db.session.add(transaction)
+        db.session.commit()
+        peer_to_peer.broadcast(peer_to_peer.publisher, transaction.as_dict(), topic='transaction')
 
         response_object = {
             'message': f'{transaction.transaction_data_string}'
         }
-        return response_object, 201
+        return response_object, HTTPStatus.CREATED
 
     @api.marshal_with(transaction_model, as_list=True)
     def get(self):
-        return Transaction.query.all(), 200
+        return Transaction.query.all(), HTTPStatus.OK
 
 
 api.add_resource(TransactionsList, '/transactions')
@@ -106,34 +88,25 @@ class NodesList(Resource):
         sender_ip_address = request.remote_addr
         # checking that the sender is who she says she is
         if sender_ip_address != address:
-            print(f'{sender_ip_address} is asking to add node {address}')
+            print(f'Warning: {sender_ip_address} is asking to add node {address}')
         if address != current_app.config['THIS_NODE']:
             nodes = Node.query.all()
             for node in nodes:
                 if node.address == address:
-                    return {'message': f'{current_app.config["THIS_NODE"]} already knows {address}!'}, 400
+                    return {'message': f'{current_app.config["THIS_NODE"]} already knows {address}!'}, \
+                           HTTPStatus.BAD_REQUEST
             new_node = Node(address)
             new_node.id = len(nodes) + 1
             peer_to_peer = FactoryPeerToPeer.create(current_app, current_app.config['COMM'])
-            blockchain = Blockchain(current_app)
-            if blockchain.add_node(new_node):
-                peer_to_peer.subscribe_to_node(new_node)
-                # the node was added successfully, we publish it to the other nodes
-                if current_app.config['COMM'] == 'zmq':
-                    peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
-                    peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
-                    peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
-                else:
-                    peer_to_peer.broadcast(peer_to_peer.publisher, new_node.as_dict(), topic='node')
-                return {'message': f'{current_app.config["THIS_NODE"]} now knows node {address}!'}, 200
-            else:  # something happened at database level
-                return {'message': f'node {address} could not be added, Database error!'}, 500
+            peer_to_peer.broadcast(peer_to_peer.publisher, new_node.as_dict(), topic='node')
+            return {'message': f'{current_app.config["THIS_NODE"]} now knows node {address}!'}, HTTPStatus.OK
         else:
-            return {'message': f'{address} sent a request to itself {current_app.config["THIS_NODE"]}!!!'}, 400
+            return {'message': f'{address} sent a request to itself {current_app.config["THIS_NODE"]}!!!'}, \
+                   HTTPStatus.BAD_REQUEST
 
     @api.marshal_with(node_model, as_list=True)
     def get(self):
-        return Node.query.all(), 200
+        return Node.query.all(), HTTPStatus.OK
 
 
 api.add_resource(NodesList, '/nodes')
@@ -156,8 +129,8 @@ class Blocks(Resource):
     def get(self, block_id):
         block = Block.query.filter_by(id=block_id).first()
         if not block:
-            api.abort(404, f'Block {block_id} not found')
-        return block, 200
+            api.abort(HTTPStatus.NOT_FOUND, f'Block {block_id} not found')
+        return block, HTTPStatus.OK
 
 
 api.add_resource(Blocks, '/blocks/<int:block_id>')
@@ -167,7 +140,7 @@ class BlocksList(Resource):
 
     @api.marshal_with(block_model, as_list=True)
     def get(self):
-        return Block.query.all(), 200
+        return Block.query.all(), HTTPStatus.OK
 
 
 api.add_resource(BlocksList, '/blocks')
