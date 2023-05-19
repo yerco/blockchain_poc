@@ -157,7 +157,7 @@ class ZMQPeerToPeer(PeerToPeer):
                     received_node.id = node['id']
                 print(f'{received_node.id}, {received_node.address} arrived to {self.app.config["THIS_NODE"]}')
                 try:
-                    existing_nodes = Node.query.filter_by(address=received_node.address)
+                    existing_nodes = Node.query.filter_by(address=received_node.address).all()
                     if len(existing_nodes) >= 1:
                         existing_nodes.delete()
                         db.session.add(received_node)
