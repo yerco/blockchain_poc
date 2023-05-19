@@ -96,11 +96,7 @@ class NodesList(Resource):
             new_node = Node(address)
             new_node.id = len(nodes) + 1
             peer_to_peer = FactoryPeerToPeer.create(current_app, current_app.config['COMM'])
-            # TODO get rid of this if statement
-            if current_app.config['COMM'] == 'zmq':
-                peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
-            else:
-                peer_to_peer.broadcast(peer_to_peer.publisher, new_node.as_dict(), topic='node')
+            peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
             return {'message': f'{current_app.config["THIS_NODE"]} now knows node {address}!'}, HTTPStatus.OK
         else:
             return {'message': f'{address} sent a request to itself {current_app.config["THIS_NODE"]}!!!'}, \
