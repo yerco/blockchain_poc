@@ -75,7 +75,7 @@ class ZMQPeerToPeer(PeerToPeer):
         try:
             subscriber = self.context.socket(zmq.SUB)
             subscriber.connect(f'tcp://{address}:{port}')
-            subscriber.setsockopt(zmq.SUBSCRIBE, b'')
+            subscriber.setsockopt_string(zmq.SUBSCRIBE, '')
             print(f'Node {self.app.config["THIS_NODE"]} subscribed to {address} ready on port: {port}')
             return subscriber
         except zmq.error.ZMQError as e:
@@ -94,50 +94,56 @@ class ZMQPeerToPeer(PeerToPeer):
             return False
 
     def receive_transaction(self):
-        socks = dict(self.poller.poll())
+        socks = dict(self.poller.poll(1000))
 
         for transaction_sub_socket in self.transaction_sub_sockets:
-            if transaction_sub_socket in socks:
-                transaction: dict = json.loads(transaction_sub_socket.recv_json())
-                if transaction['id'] != 'None':
-                    transaction_id = transaction['id']
-                else:
-                    transactions = Transaction.query.all()
-                    transaction_id = len(transactions) + 1
-                received_public_key = transaction['public_key'].split(' ')
-                x = int(received_public_key[1].strip()[:-2], 16)
-                y = int(received_public_key[2].strip()[:-4], 16)
-                public_key = Point(x, y, curve=curve.secp256k1)
-                transaction_data_string = transaction['transaction_data_string'][2:-1]
-                signature = tuple(json.loads(transaction['signature']))
-                valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
-                # if we ratify the transaction sent is valid we store it in the database
-                if valid:
-                    transaction_db = Transaction()
-                    transaction_db.id = transaction_id
-                    transaction_db.public_key = public_key
-                    transaction_db.transaction_data_string = transaction_data_string
-                    transaction_db.signature = json.dumps(signature)
-                    transaction_db.valid = valid
-                    try:
-                        db.session.add(transaction_db)
-                        db.session.commit()
-                        print(f'Transaction: {transaction_id} added.')
+            try:
+                if transaction_sub_socket in socks:
+                    transaction: dict = json.loads(transaction_sub_socket.recv_json())
+                    if transaction['id'] != 'None':
+                        transaction_id = transaction['id']
+                    else:
                         transactions = Transaction.query.all()
-                        if len(transactions) >= self.app.config['TRANSACTIONS_AMOUNT']:
-                            blockchain = Blockchain(self.app)
-                            # proof_work generates a new block
-                            new_block = blockchain.proof_of_work()
-                            db.session.add(new_block)
+                        transaction_id = len(transactions) + 1
+                    received_public_key = transaction['public_key'].split(' ')
+                    x = int(received_public_key[1].strip()[:-2], 16)
+                    y = int(received_public_key[2].strip()[:-4], 16)
+                    public_key = Point(x, y, curve=curve.secp256k1)
+                    transaction_data_string = transaction['transaction_data_string'][2:-1]
+                    signature = tuple(json.loads(transaction['signature']))
+                    valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
+                    # if we ratify the transaction sent is valid we store it in the database
+                    if valid:
+                        transaction_db = Transaction()
+                        transaction_db.id = transaction_id
+                        transaction_db.public_key = public_key
+                        transaction_db.transaction_data_string = transaction_data_string
+                        transaction_db.signature = json.dumps(signature)
+                        transaction_db.valid = valid
+                        try:
+                            db.session.add(transaction_db)
                             db.session.commit()
-                            self.broadcast(self.chain_publisher, blockchain.get_blocks_as_list_of_dict())
-                            db.session.query(Transaction).delete()
-                            db.session.commit()
-                    except SQLAlchemyError as e:
-                        print(f'Transaction {transaction_id} could not be added: ', e)
-                        continue
-                else:
-                    print(f'Transaction: {transaction_id} is not valid.')
+                            print(f'Transaction: {transaction_id} added.')
+                            transactions = Transaction.query.all()
+                            if len(transactions) >= self.app.config['TRANSACTIONS_AMOUNT']:
+                                blockchain = Blockchain(self.app)
+                                # proof_work generates a new block
+                                new_block = blockchain.proof_of_work()
+                                db.session.add(new_block)
+                                self.broadcast(self.chain_publisher, blockchain.get_blocks_as_list_of_dict())
+                                db.session.query(Transaction).delete()
+                                db.session.commit()
+                        except SQLAlchemyError as e:
+                            print(f'Transaction {transaction_id} could not be added: ', e)
+                            continue
+                    else:
+                        print(f'Transaction: {transaction_id} is not valid.')
+            except zmq.ZMQError as e:
+                # Handle the error
+                print(f"ZMQError at receiving transaction: {e}")
+            except Exception as e:
+                print(f'Problem receiving transaction: ', e)
+                continue
 
     def receive_node(self):
         socks = dict(self.poller.poll())
@@ -151,31 +157,29 @@ class ZMQPeerToPeer(PeerToPeer):
                     received_node.id = node['id']
                 print(f'{received_node.id}, {received_node.address} arrived to {self.app.config["THIS_NODE"]}')
                 try:
-                    existing_node = Node.query.filter_by(address=received_node.address).all()
-                    if len(existing_node) > 1:
-                        print(f'\nBroadcast node: there is more than one node with the same address: '
-                              f'{received_node.address}!\n')
+                    existing_nodes = Node.query.filter_by(address=received_node.address)
+                    if len(existing_nodes) >= 1:
+                        existing_nodes.delete()
+                        db.session.add(received_node)
+                        db.session.commit()
+                        print(f'Broadcast node: there was at least one node with the same address: {received_node.address}')
                         # continue
                         # raise Exception(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
                     # TODO check if it's necessary to swap the ids
-                    elif len(existing_node) == 1:
-                        _nodes = Node.query.all()
-                        existing_node[0].id = len(_nodes) + 1
-                        # here happens the swap
-                        db.session.add(existing_node)
-                        db.session.add(received_node)
-                        db.session.commit()
-                        print(f'Node: {received_node.address} already registered id swapped.')
+                    # elif len(existing_node) == 1:
+                    #     _nodes = Node.query.all()
+                    #     existing_node.id = len(_nodes) + 1
+                    #     db.session.add(received_node)
+                    #     db.session.add(existing_node)
+                    #     db.session.commit()
+                    #     print(f'Node: {received_node.id}, {received_node.address} already registered.')
                     else:
                         # Fresh node
-                        if received_node.id and received_node.id != 'None':
-                            db.session.add(received_node)
-                            db.session.commit()
-                            print(f'Node: {received_node.id}, {received_node.address} added.')
-                            self.subscribe_to_node(received_node)
-                            print(f'{self.app.config["THIS_NODE"]} subscribed to {received_node.address}')
-                        else:
-                            print(f'{self.app.config["THIS_NODE"]} did not receive an ID from {received_node.address}')
+                        db.session.add(received_node)
+                        db.session.commit()
+                        print(f'Node: {received_node.id}, {received_node.address} added.')
+                        self.subscribe_to_node(received_node)
+                        print(f'{self.app.config["THIS_NODE"]} subscribed to {received_node.address}')
                 except SQLAlchemyError as e:
                     # TODO make it more elegant instead of just spit the exception
                     print(f'Node {received_node.id}, {received_node.address} could not be added: ', e)
@@ -187,34 +191,40 @@ class ZMQPeerToPeer(PeerToPeer):
     def receive_chain(self):
         socks = dict(self.poller.poll())
 
-        # Handle incoming messages from all subscribed sockets
-        for chain_sub_socket in self.chain_sub_sockets:
-            if chain_sub_socket in socks:
-                received_blocks = json.loads(chain_sub_socket.recv_json())
-                stored_blocks = Block.query.all()
-                if len(received_blocks) > len(stored_blocks):
-                    # first we check the received blocks against what we already have
-                    for i in range(len(stored_blocks)):
-                        if stored_blocks[i].as_dict() != received_blocks[i]:
-                            print(f'Inconsistency in the chain received compared with the one we already have')
-                            continue
-                    try:
-                        # what we have is shorter than what we received
-                        num_blocks_deleted = db.session.query(Block).delete()
-                        print(f'Updating chain: {num_blocks_deleted} blocks deleted.')
-                        for block in received_blocks:
-                            new_block = Block()
-                            [setattr(new_block, key, block[key]) for key in block]
-                            db.session.add(new_block)
-                        db.session.commit()
-                        print(f'Chain updated and broadcast.')
-                        self.broadcast(self.chain_publisher, received_blocks)
-                        # TODO: delete only required, here we are wiping out everything
-                        db.session.query(Transaction).delete()
-                        db.session.commit()
-                    except SQLAlchemyError as e:
-                        print(f'Chain could not be updated: ', e)
-                        db.session.rollback()
+        try:
+            # Handle incoming messages from all subscribed sockets
+            for chain_sub_socket in self.chain_sub_sockets:
+                if chain_sub_socket in socks:
+                    received_blocks = json.loads(chain_sub_socket.recv_json())
+                    stored_blocks = Block.query.all()
+                    if len(received_blocks) > len(stored_blocks):
+                        # first we check the received blocks against what we already have
+                        for i in range(len(stored_blocks)):
+                            if stored_blocks[i].as_dict() != received_blocks[i]:
+                                print(f'Inconsistency in the chain received compared with the one we already have')
+                                continue
+                        try:
+                            # what we have is shorter than what we received
+                            num_blocks_deleted = db.session.query(Block).delete()
+                            print(f'Updating chain: {num_blocks_deleted} blocks deleted.')
+                            for block in received_blocks:
+                                new_block = Block()
+                                [setattr(new_block, key, block[key]) for key in block]
+                                db.session.add(new_block)
+                            db.session.commit()
+                            print(f'Chain updated and broadcast.')
+                            self.broadcast(self.chain_publisher, received_blocks)
+                            # TODO: delete only required, here we are wiping out everything
+                            db.session.query(Transaction).delete()
+                            db.session.commit()
+                        except SQLAlchemyError as e:
+                            print(f'Chain could not be updated: ', e)
+                            db.session.rollback()
+        except zmq.ZMQError as e:
+            # Handle the error
+            print(f"ZMQError at receiving chain: {e}")
+        except Exception as e:
+            print(f'A problem occurred receiving chain: ', e)
 
     # this is useless but for testing
     def tester_spitter(self):

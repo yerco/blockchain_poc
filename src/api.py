@@ -94,7 +94,6 @@ class NodesList(Resource):
                     return {'message': f'{current_app.config["THIS_NODE"]} already knows {address}!'}, \
                            HTTPStatus.BAD_REQUEST
             new_node = Node(address)
-            new_node.id = len(nodes) + 1
             peer_to_peer = FactoryPeerToPeer.create(current_app, current_app.config['COMM'])
             peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
             return {'message': f'{current_app.config["THIS_NODE"]} now knows node {address}!'}, HTTPStatus.OK

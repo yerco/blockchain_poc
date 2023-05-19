@@ -38,7 +38,7 @@ class Blockchain:
         db.session.commit()
         return True
 
-    def proof_of_work(self):
+    def proof_of_work(self) -> Block:
         verified_transactions = []
         transactions = Transaction.query.all()
         for transaction in transactions:
