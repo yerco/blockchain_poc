@@ -146,7 +146,7 @@ class ZMQPeerToPeer(PeerToPeer):
                 continue
 
     def receive_node(self):
-        socks = dict(self.poller.poll())
+        socks = dict(self.poller.poll(1000))
 
         # Handle incoming messages from all subscribed sockets
         for node_sub_socket in self.node_sub_sockets:
@@ -162,6 +162,7 @@ class ZMQPeerToPeer(PeerToPeer):
                     existing_nodes = Node.query.filter_by(address=received_node.address).all()
                     if len(existing_nodes) >= 1:
                         Node.query.filter_by(address=received_node.address).delete()
+                        db.session.commit()
                         db.session.add(received_node)
                         db.session.commit()
                         print(f'Broadcast node: there was at least one node with the same address: {received_node.address}')
@@ -191,7 +192,7 @@ class ZMQPeerToPeer(PeerToPeer):
                     # raise Exception(f'A problem occurred ', e)
 
     def receive_chain(self):
-        socks = dict(self.poller.poll())
+        socks = dict(self.poller.poll(1000))
 
         try:
             # Handle incoming messages from all subscribed sockets
