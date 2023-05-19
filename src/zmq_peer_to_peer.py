@@ -39,51 +39,53 @@ class ZMQPeerToPeer(PeerToPeer):
         self.transaction_publisher = self.set_publisher(self.broadcast_transaction_port)
 
     def subscribe_to_node(self, node: Node) -> bool:
-        if node.address != self.app.config['THIS_NODE']:
-            try:
-                node_subscriber = self.set_subscriber(node.address, self.broadcast_nodes_port)
-                self.node_sub_sockets.append(node_subscriber)
-                self.poller.register(node_subscriber, zmq.POLLIN)
-                self.num_of_subscribers += 1
-                chain_subscriber = self.set_subscriber(node.address, self.broadcast_chain_port)
-                self.chain_sub_sockets.append(chain_subscriber)
-                self.poller.register(chain_subscriber, zmq.POLLIN)
-                self.num_of_subscribers += 1
-                transaction_subscriber = self.set_subscriber(node.address, self.broadcast_transaction_port)
-                self.transaction_sub_sockets.append(transaction_subscriber)
-                self.poller.register(transaction_subscriber, zmq.POLLIN)
-                self.num_of_subscribers += 1
-                print(f'Node: {self.app.config["THIS_NODE"]} subscribed to {node.address}')
-                return True
-            except zmq.error.ZMQError as e:
-                print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
-                return False
-            except Exception as e:
-                print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
-                return False
-        else:
-            print(f'THIS node: {node.id}, {node.address} is trying to subscribe to itself!')
+        try:
+            node_subscriber = self.set_subscriber(node.address, self.broadcast_nodes_port)
+            self.node_sub_sockets.append(node_subscriber)
+            self.poller.register(node_subscriber, zmq.POLLIN)
+            self.num_of_subscribers += 1
+            chain_subscriber = self.set_subscriber(node.address, self.broadcast_chain_port)
+            self.chain_sub_sockets.append(chain_subscriber)
+            self.poller.register(chain_subscriber, zmq.POLLIN)
+            self.num_of_subscribers += 1
+            transaction_subscriber = self.set_subscriber(node.address, self.broadcast_transaction_port)
+            self.transaction_sub_sockets.append(transaction_subscriber)
+            self.poller.register(transaction_subscriber, zmq.POLLIN)
+            self.num_of_subscribers += 1
+            return True
+        except zmq.error.ZMQError as e:
+            print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
+            return False
+        except Exception as e:
+            print(f'Node: {self.app.config["THIS_NODE"]} could not be subscribed to {node.address}', e)
             return False
 
     def set_publisher(self, port):
-        publisher = ZMQPublisher(port)
-        print(f'Publisher broadcasting at: tcp://*:{port}')
-        self.num_of_publishers += 1
-        return publisher
+        try:
+            publisher = ZMQPublisher(port)
+            print(f'Publisher broadcasting at: tcp://*:{port}')
+            self.num_of_publishers += 1
+            return publisher
+        except zmq.error.ZMQError as e:
+            raise e
+        except Exception as e:
+            print('Problem at set_publisher: ', e)
 
     def set_subscriber(self, address, port) -> Union[zmq.Socket, Exception]:
         try:
             subscriber = self.context.socket(zmq.SUB)
             subscriber.connect(f'tcp://{address}:{port}')
-            subscriber.setsockopt(zmq.SUBSCRIBE, b'')
+            subscriber.setsockopt_string(zmq.SUBSCRIBE, '')
             print(f'Node {self.app.config["THIS_NODE"]} subscribed to {address} ready on port: {port}')
             return subscriber
         except zmq.error.ZMQError as e:
             raise e
+        except Exception as e:
+            print('Problem at set_subscriber: ', e)
 
     def broadcast(self, publisher, data, topic=None) -> bool:
         try:
-            _data = json.dumps(data, sort_keys=True, ensure_ascii=False)  # .encode()
+            _data = json.dumps(data, sort_keys=True, ensure_ascii=False)
             publisher.send_json(_data)
             print(f'Just broadcast: {_data}')
             return True
@@ -92,18 +94,22 @@ class ZMQPeerToPeer(PeerToPeer):
             return False
 
     def receive_transaction(self):
-        socks = self.poller.sockets
+        socks = dict(self.poller.poll(1000))
 
-        for sock in socks:
-            for transaction_sub_socket in self.transaction_sub_sockets:
-                if transaction_sub_socket in sock:
+        for transaction_sub_socket in self.transaction_sub_sockets:
+            try:
+                if transaction_sub_socket in socks:
                     transaction: dict = json.loads(transaction_sub_socket.recv_json())
-                    transaction_id = transaction['id']
+                    if transaction['id'] != 'None':
+                        transaction_id = transaction['id']
+                    else:
+                        transactions = Transaction.query.all()
+                        transaction_id = len(transactions) + 1
                     received_public_key = transaction['public_key'].split(' ')
                     x = int(received_public_key[1].strip()[:-2], 16)
                     y = int(received_public_key[2].strip()[:-4], 16)
                     public_key = Point(x, y, curve=curve.secp256k1)
-                    transaction_data_string = transaction['transaction_data_string']
+                    transaction_data_string = transaction['transaction_data_string'][2:-1]
                     signature = tuple(json.loads(transaction['signature']))
                     valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
                     # if we ratify the transaction sent is valid we store it in the database
@@ -124,7 +130,6 @@ class ZMQPeerToPeer(PeerToPeer):
                                 # proof_work generates a new block
                                 new_block = blockchain.proof_of_work()
                                 db.session.add(new_block)
-                                db.session.commit()
                                 self.broadcast(self.chain_publisher, blockchain.get_blocks_as_list_of_dict())
                                 db.session.query(Transaction).delete()
                                 db.session.commit()
@@ -133,69 +138,66 @@ class ZMQPeerToPeer(PeerToPeer):
                             continue
                     else:
                         print(f'Transaction: {transaction_id} is not valid.')
+            except zmq.ZMQError as e:
+                # Handle the error
+                print(f"ZMQError at receiving transaction: {e}")
+            except Exception as e:
+                print(f'Problem receiving transaction: ', e)
+                continue
 
     def receive_node(self):
-        socks = self.poller.sockets
-
-        # # Check if there are any new subscribers to add
-        # for node_sub_socket in self.node_sub_sockets:
-        #     if node_socks.get(node_sub_socket) == zmq.POLLIN:
-        #         new_node_sub = self.context.socket(zmq.SUB)
-        #         new_node_sub.connect(node_sub_socket.getsockopt(zmq.LAST_ENDPOINT))
-        #         # here is the double subscription
-        #         new_node_sub.setsockopt(zmq.SUBSCRIBE, b'')
-        #         self.node_sub_sockets.append(new_node_sub)
-        #         self.poller.register(new_node_sub, zmq.POLLIN)
+        socks = dict(self.poller.poll(1000))
 
         # Handle incoming messages from all subscribed sockets
-        for sock in socks:
-            for node_sub_socket in self.node_sub_sockets:
-                if node_sub_socket in sock:
-                    node: dict = json.loads(node_sub_socket.recv_json())
-                    received_node = Node(address=node['address'])
-                    if node['id']:
-                        received_node.id = node['id']
-                    print(f'{received_node.id}, {received_node.address} arrived to {self.app.config["THIS_NODE"]}')
-                    try:
-                        existing_node = Node.query.filter_by(address=received_node.address).all()
-                        if len(existing_node) >= 1:
-                            print(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
-                            continue
-                            # raise Exception(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
-                        # TODO check if it's necessary to swap the ids
-                        # elif len(existing_node) == 1:
-                        #     temp = existing_node.id
-                        #     existing_node.id = received_node.id
-                        #     received_node.id = temp
-                        #     # here happens the swap
-                        #     db.session.add(existing_node)
-                        #     db.session.commit()
-                        #     print(f'Node: {received_node.id}, {received_node.address} already registered.')
-                        else:
-                            # Fresh node
-                            if received_node.id and received_node.id != 'None':
-                                db.session.add(received_node)
-                                db.session.commit()
-                                print(f'Node: {received_node.id}, {received_node.address} added.')
-                                self.subscribe_to_node(received_node)
-                                print(f'{self.app.config["THIS_NODE"]} subscribed to {received_node.address}')
-                            else:
-                                print(f'{self.app.config["THIS_NODE"]} did not receive an ID from {received_node.address}')
-                    except SQLAlchemyError as e:
-                        # TODO make it more elegant instead of just spit the exception
-                        print(f'Node {received_node.id}, {received_node.address} could not be added: ', e)
-                        db.session.rollback()
-                    except Exception as e:
-                        print(f'A problem occurred ', e)
-                        # raise Exception(f'A problem occurred ', e)
+        for node_sub_socket in self.node_sub_sockets:
+            if node_sub_socket in socks:
+                node: dict = json.loads(node_sub_socket.recv_json())
+                received_node = Node(address=node['address'])
+                if node['id'] != 'None':
+                    received_node.id = node['id']
+                else:
+                    received_node.id = None
+                print(f'{received_node.id}, {received_node.address} arrived to {self.app.config["THIS_NODE"]}')
+                try:
+                    existing_nodes = Node.query.filter_by(address=received_node.address).all()
+                    if len(existing_nodes) >= 1:
+                        Node.query.filter_by(address=received_node.address).delete()
+                        db.session.commit()
+                        db.session.add(received_node)
+                        db.session.commit()
+                        print(f'Broadcast node: there was at least one node with the same address: {received_node.address}')
+                        # continue
+                        # raise Exception(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
+                    # TODO check if it's necessary to swap the ids
+                    # elif len(existing_node) == 1:
+                    #     _nodes = Node.query.all()
+                    #     existing_node.id = len(_nodes) + 1
+                    #     db.session.add(received_node)
+                    #     db.session.add(existing_node)
+                    #     db.session.commit()
+                    #     print(f'Node: {received_node.id}, {received_node.address} already registered.')
+                    else:
+                        # Fresh node
+                        db.session.add(received_node)
+                        db.session.commit()
+                        print(f'Node: {received_node.id}, {received_node.address} added.')
+                        self.subscribe_to_node(received_node)
+                        print(f'{self.app.config["THIS_NODE"]} subscribed to {received_node.address}')
+                except SQLAlchemyError as e:
+                    # TODO make it more elegant instead of just spit the exception
+                    print(f'Node {received_node.id}, {received_node.address} could not be added: ', e)
+                    db.session.rollback()
+                except Exception as e:
+                    print(f'A problem occurred ', e)
+                    # raise Exception(f'A problem occurred ', e)
 
     def receive_chain(self):
-        socks = self.poller.sockets
+        socks = dict(self.poller.poll(1000))
 
-        # Handle incoming messages from all subscribed sockets
-        for sock in socks:
+        try:
+            # Handle incoming messages from all subscribed sockets
             for chain_sub_socket in self.chain_sub_sockets:
-                if chain_sub_socket in sock:
+                if chain_sub_socket in socks:
                     received_blocks = json.loads(chain_sub_socket.recv_json())
                     stored_blocks = Block.query.all()
                     if len(received_blocks) > len(stored_blocks):
@@ -221,6 +223,11 @@ class ZMQPeerToPeer(PeerToPeer):
                         except SQLAlchemyError as e:
                             print(f'Chain could not be updated: ', e)
                             db.session.rollback()
+        except zmq.ZMQError as e:
+            # Handle the error
+            print(f"ZMQError at receiving chain: {e}")
+        except Exception as e:
+            print(f'A problem occurred receiving chain: ', e)
 
     # this is useless but for testing
     def tester_spitter(self):

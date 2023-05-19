@@ -38,7 +38,7 @@ class Blockchain:
         db.session.commit()
         return True
 
-    def proof_of_work(self):
+    def proof_of_work(self) -> Block:
         verified_transactions = []
         transactions = Transaction.query.all()
         for transaction in transactions:
@@ -104,6 +104,9 @@ class Blockchain:
             except SQLAlchemyError as e:
                 print(f'Node {node} could not be added: ', e)
                 return False
+            except Exception as e:
+                print(f'A problem occurred while adding node {node}: ', e)
+                return False
         else:
             # node could have been reset (it still at the database)
             nodes = Node.query.all()
@@ -116,6 +119,18 @@ class Blockchain:
             db.session.commit()
             print(f'THIS node: {node.id}, {node.address} added to itself DB.')
             return True
+
+    def remove_node(self, node: Node) -> bool:
+        try:
+            db.session.delete(node)
+            db.session.commit()
+            print(f'Node: {node.id}, {node.address} has been removed from {self.app.config["THIS_NODE"]}.')
+            return True
+        except SQLAlchemyError as e:
+            print(f'Node {node} could not be removed: ', e)
+            return False
+        except Exception as e:
+            print(f'A problem occurred while removing node {node}: ', e)
 
     def add_node_at(self, target_node: Node, new_node: Node) -> bool:
         url = f'http://{target_node.address}:{self.app.config["FLASK_RUN_PORT"]}/nodes'
