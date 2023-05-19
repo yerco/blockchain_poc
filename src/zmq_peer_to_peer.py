@@ -153,8 +153,10 @@ class ZMQPeerToPeer(PeerToPeer):
             if node_sub_socket in socks:
                 node: dict = json.loads(node_sub_socket.recv_json())
                 received_node = Node(address=node['address'])
-                if node['id']:
+                if node['id'] != 'None':
                     received_node.id = node['id']
+                else:
+                    received_node.id = None
                 print(f'{received_node.id}, {received_node.address} arrived to {self.app.config["THIS_NODE"]}')
                 try:
                     existing_nodes = Node.query.filter_by(address=received_node.address).all()
