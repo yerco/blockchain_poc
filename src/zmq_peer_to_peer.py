@@ -159,12 +159,11 @@ class ZMQPeerToPeer(PeerToPeer):
                         # raise Exception(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
                     # TODO check if it's necessary to swap the ids
                     elif len(existing_node) == 1:
-                        temp = existing_node[0].id
                         _nodes = Node.query.all()
                         existing_node[0].id = len(_nodes) + 1
-                        received_node.id = temp
                         # here happens the swap
                         db.session.add(existing_node)
+                        db.session.add(received_node)
                         db.session.commit()
                         print(f'Node: {received_node.address} already registered id swapped.')
                     else:
