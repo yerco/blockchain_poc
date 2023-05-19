@@ -159,7 +159,7 @@ class ZMQPeerToPeer(PeerToPeer):
                 try:
                     existing_nodes = Node.query.filter_by(address=received_node.address).all()
                     if len(existing_nodes) >= 1:
-                        existing_nodes.delete()
+                        Node.query.filter_by(address=received_node.address).delete()
                         db.session.add(received_node)
                         db.session.commit()
                         print(f'Broadcast node: there was at least one node with the same address: {received_node.address}')
