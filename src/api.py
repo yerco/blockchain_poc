@@ -58,9 +58,7 @@ class TransactionsList(Resource):
         }
         transaction = Transaction(public_key=self.public_key, private_key=self.private_key, data=data)
         peer_to_peer = FactoryPeerToPeer.create(current_app, current_app.config['COMM'])
-        db.session.add(transaction)
-        db.session.commit()
-        peer_to_peer.broadcast(peer_to_peer.publisher, transaction.as_dict(), topic='transaction')
+        peer_to_peer.broadcast(peer_to_peer.transaction_publisher, transaction.as_dict(), topic='transaction')
 
         response_object = {
             'message': f'{transaction.transaction_data_string}'

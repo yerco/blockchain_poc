@@ -19,6 +19,7 @@ class KafkaPeerToPeer(PeerToPeer):
     def __init__(self, app):
         super().__init__(app)
         self.publisher = self.set_publisher()
+        self.node_publisher = self.transaction_publisher = self.chain_publisher = self.publisher
         group = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(4))
         self.node_subscriber = self.set_subscriber(group=group, topic='node')
         self.transaction_subscriber = self.set_subscriber(group=group, topic='transaction')

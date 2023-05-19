@@ -61,10 +61,15 @@ class ZMQPeerToPeer(PeerToPeer):
             return False
 
     def set_publisher(self, port):
-        publisher = ZMQPublisher(port)
-        print(f'Publisher broadcasting at: tcp://*:{port}')
-        self.num_of_publishers += 1
-        return publisher
+        try:
+            publisher = ZMQPublisher(port)
+            print(f'Publisher broadcasting at: tcp://*:{port}')
+            self.num_of_publishers += 1
+            return publisher
+        except zmq.error.ZMQError as e:
+            raise e
+        except Exception as e:
+            print('Problem at set_publisher: ', e)
 
     def set_subscriber(self, address, port) -> Union[zmq.Socket, Exception]:
         try:
@@ -75,6 +80,8 @@ class ZMQPeerToPeer(PeerToPeer):
             return subscriber
         except zmq.error.ZMQError as e:
             raise e
+        except Exception as e:
+            print('Problem at set_subscriber: ', e)
 
     def broadcast(self, publisher, data, topic=None) -> bool:
         try:
@@ -87,47 +94,50 @@ class ZMQPeerToPeer(PeerToPeer):
             return False
 
     def receive_transaction(self):
-        socks = self.poller.sockets
+        socks = dict(self.poller.poll())
 
-        for sock in socks:
-            for transaction_sub_socket in self.transaction_sub_sockets:
-                if transaction_sub_socket in sock:
-                    transaction: dict = json.loads(transaction_sub_socket.recv_json())
+        for transaction_sub_socket in self.transaction_sub_sockets:
+            if transaction_sub_socket in socks:
+                transaction: dict = json.loads(transaction_sub_socket.recv_json())
+                if transaction['id'] != 'None':
                     transaction_id = transaction['id']
-                    received_public_key = transaction['public_key'].split(' ')
-                    x = int(received_public_key[1].strip()[:-2], 16)
-                    y = int(received_public_key[2].strip()[:-4], 16)
-                    public_key = Point(x, y, curve=curve.secp256k1)
-                    transaction_data_string = transaction['transaction_data_string']
-                    signature = tuple(json.loads(transaction['signature']))
-                    valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
-                    # if we ratify the transaction sent is valid we store it in the database
-                    if valid:
-                        transaction_db = Transaction()
-                        transaction_db.id = transaction_id
-                        transaction_db.public_key = public_key
-                        transaction_db.transaction_data_string = transaction_data_string
-                        transaction_db.signature = json.dumps(signature)
-                        transaction_db.valid = valid
-                        try:
-                            db.session.add(transaction_db)
+                else:
+                    transactions = Transaction.query.all()
+                    transaction_id = len(transactions) + 1
+                received_public_key = transaction['public_key'].split(' ')
+                x = int(received_public_key[1].strip()[:-2], 16)
+                y = int(received_public_key[2].strip()[:-4], 16)
+                public_key = Point(x, y, curve=curve.secp256k1)
+                transaction_data_string = transaction['transaction_data_string'][2:-1]
+                signature = tuple(json.loads(transaction['signature']))
+                valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
+                # if we ratify the transaction sent is valid we store it in the database
+                if valid:
+                    transaction_db = Transaction()
+                    transaction_db.id = transaction_id
+                    transaction_db.public_key = public_key
+                    transaction_db.transaction_data_string = transaction_data_string
+                    transaction_db.signature = json.dumps(signature)
+                    transaction_db.valid = valid
+                    try:
+                        db.session.add(transaction_db)
+                        db.session.commit()
+                        print(f'Transaction: {transaction_id} added.')
+                        transactions = Transaction.query.all()
+                        if len(transactions) >= self.app.config['TRANSACTIONS_AMOUNT']:
+                            blockchain = Blockchain(self.app)
+                            # proof_work generates a new block
+                            new_block = blockchain.proof_of_work()
+                            db.session.add(new_block)
                             db.session.commit()
-                            print(f'Transaction: {transaction_id} added.')
-                            transactions = Transaction.query.all()
-                            if len(transactions) >= self.app.config['TRANSACTIONS_AMOUNT']:
-                                blockchain = Blockchain(self.app)
-                                # proof_work generates a new block
-                                new_block = blockchain.proof_of_work()
-                                db.session.add(new_block)
-                                db.session.commit()
-                                self.broadcast(self.chain_publisher, blockchain.get_blocks_as_list_of_dict())
-                                db.session.query(Transaction).delete()
-                                db.session.commit()
-                        except SQLAlchemyError as e:
-                            print(f'Transaction {transaction_id} could not be added: ', e)
-                            continue
-                    else:
-                        print(f'Transaction: {transaction_id} is not valid.')
+                            self.broadcast(self.chain_publisher, blockchain.get_blocks_as_list_of_dict())
+                            db.session.query(Transaction).delete()
+                            db.session.commit()
+                    except SQLAlchemyError as e:
+                        print(f'Transaction {transaction_id} could not be added: ', e)
+                        continue
+                else:
+                    print(f'Transaction: {transaction_id} is not valid.')
 
     def receive_node(self):
         socks = dict(self.poller.poll())
@@ -174,37 +184,36 @@ class ZMQPeerToPeer(PeerToPeer):
                     # raise Exception(f'A problem occurred ', e)
 
     def receive_chain(self):
-        socks = self.poller.sockets
+        socks = dict(self.poller.poll())
 
         # Handle incoming messages from all subscribed sockets
-        for sock in socks:
-            for chain_sub_socket in self.chain_sub_sockets:
-                if chain_sub_socket in sock:
-                    received_blocks = json.loads(chain_sub_socket.recv_json())
-                    stored_blocks = Block.query.all()
-                    if len(received_blocks) > len(stored_blocks):
-                        # first we check the received blocks against what we already have
-                        for i in range(len(stored_blocks)):
-                            if stored_blocks[i].as_dict() != received_blocks[i]:
-                                print(f'Inconsistency in the chain received compared with the one we already have')
-                                continue
-                        try:
-                            # what we have is shorter than what we received
-                            num_blocks_deleted = db.session.query(Block).delete()
-                            print(f'Updating chain: {num_blocks_deleted} blocks deleted.')
-                            for block in received_blocks:
-                                new_block = Block()
-                                [setattr(new_block, key, block[key]) for key in block]
-                                db.session.add(new_block)
-                            db.session.commit()
-                            print(f'Chain updated and broadcast.')
-                            self.broadcast(self.chain_publisher, received_blocks)
-                            # TODO: delete only required, here we are wiping out everything
-                            db.session.query(Transaction).delete()
-                            db.session.commit()
-                        except SQLAlchemyError as e:
-                            print(f'Chain could not be updated: ', e)
-                            db.session.rollback()
+        for chain_sub_socket in self.chain_sub_sockets:
+            if chain_sub_socket in socks:
+                received_blocks = json.loads(chain_sub_socket.recv_json())
+                stored_blocks = Block.query.all()
+                if len(received_blocks) > len(stored_blocks):
+                    # first we check the received blocks against what we already have
+                    for i in range(len(stored_blocks)):
+                        if stored_blocks[i].as_dict() != received_blocks[i]:
+                            print(f'Inconsistency in the chain received compared with the one we already have')
+                            continue
+                    try:
+                        # what we have is shorter than what we received
+                        num_blocks_deleted = db.session.query(Block).delete()
+                        print(f'Updating chain: {num_blocks_deleted} blocks deleted.')
+                        for block in received_blocks:
+                            new_block = Block()
+                            [setattr(new_block, key, block[key]) for key in block]
+                            db.session.add(new_block)
+                        db.session.commit()
+                        print(f'Chain updated and broadcast.')
+                        self.broadcast(self.chain_publisher, received_blocks)
+                        # TODO: delete only required, here we are wiping out everything
+                        db.session.query(Transaction).delete()
+                        db.session.commit()
+                    except SQLAlchemyError as e:
+                        print(f'Chain could not be updated: ', e)
+                        db.session.rollback()
 
     # this is useless but for testing
     def tester_spitter(self):
