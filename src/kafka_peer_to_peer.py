@@ -27,7 +27,7 @@ class KafkaPeerToPeer(PeerToPeer):
 
     def subscribe_to_node(self, node: Node) -> bool:
         # all of them subscribe to a backbone in kafka
-        pass
+        return True
 
     def set_publisher(self):
         return Producer({

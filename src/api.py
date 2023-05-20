@@ -5,7 +5,6 @@ from flask_restx import Resource, Api, fields
 from fastecdsa.keys import import_key
 from http import HTTPStatus
 
-from src import db
 from src.models import Block, Node, Transaction
 from src.factory_peer_to_peer import FactoryPeerToPeer
 from src.kafka_peer_to_peer import create_kafka
@@ -95,7 +94,7 @@ class NodesList(Resource):
                            HTTPStatus.BAD_REQUEST
             new_node = Node(address)
             peer_to_peer = FactoryPeerToPeer.create(current_app, current_app.config['COMM'])
-            peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict())
+            peer_to_peer.broadcast(peer_to_peer.node_publisher, new_node.as_dict(), topic='node')
             return {'message': f'{current_app.config["THIS_NODE"]} now knows node {address}!'}, HTTPStatus.OK
         else:
             return {'message': f'{address} sent a request to itself {current_app.config["THIS_NODE"]}!!!'}, \
