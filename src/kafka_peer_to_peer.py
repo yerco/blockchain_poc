@@ -154,7 +154,7 @@ class KafkaPeerToPeer(PeerToPeer):
                 partition = event.partition()
                 print(f'Received: chain {received_blocks} from partition {partition}')
                 stored_blocks = Block.query.all()
-                if len(received_blocks) > len(stored_blocks):
+                if isinstance(received_blocks, dict) and len(received_blocks) > len(stored_blocks):
                     # first we check the received blocks against what we already have
                     for i in range(len(received_blocks)):
                         if stored_blocks:
