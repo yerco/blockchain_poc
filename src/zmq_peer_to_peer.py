@@ -38,6 +38,57 @@ class ZMQPeerToPeer(PeerToPeer):
         self.chain_publisher = self.set_publisher(self.broadcast_chain_port)
         self.transaction_publisher = self.set_publisher(self.broadcast_transaction_port)
 
+    def bootstrap(self, *args, **kwargs):
+        blockchain = Blockchain(self.app)
+        first_node = Node(address=self.app.config['FIRST_NODE'])
+        this_node = Node(address=self.app.config['THIS_NODE'])
+        blockchain.add_node(this_node)
+        self.subscribe_to_node(this_node)
+        if first_node.address != this_node.address:
+            blockchain.add_node(first_node)
+            if self.subscribe_to_node(first_node) is False:
+                # maybe wipe out the node table?
+                blockchain.remove_node(first_node)
+                blockchain.remove_node(this_node)
+                print('Could not subscribe to first node, find another alternative as first node.')
+                exit(0)
+            # here this node informs the first node that it exists
+            if blockchain.add_node_at(first_node, this_node) is False:
+                print('Could not post to first node, find another alternative as first node.')
+                exit(0)
+            else:
+                available_nodes = blockchain.get_nodes_from(first_node)
+                registered_nodes = Node.query.all()
+                _registered_nodes = []
+                for registered_node in registered_nodes:
+                    _registered_nodes.append(registered_node.as_dict())
+                for node in available_nodes:
+                    if node['address'] != self.app.config['THIS_NODE'] and not any(node['address'] in d.values() for d in _registered_nodes):
+                        _node = Node(address=node['address'])
+                        _node.id = node['id']
+                        self.subscribe_to_node(_node)
+                        blockchain.add_node(_node)
+
+                    # at least get a genesis block
+                    if not Block.query.all():
+                        response = blockchain.get_blocks_from(Node(address=node['address']), 1)
+                        if response:
+                            try:
+                                genesis_block = Block()
+                                [setattr(genesis_block, key, response[key]) for key in response]
+                                db.session.add(genesis_block)
+                                db.session.commit()
+                            except SQLAlchemyError as e:
+                                print(f'Genesis block could not be added: ', e)
+                            except Exception as e:
+                                print(f'A problem occurred while adding the genesis block: ', e)
+        else:
+            # this node could be the first of all
+            if blockchain.create_genesis_block():
+                print('Genesis block created.')
+            else:
+                print('Genesis block already exists.')
+
     def subscribe_to_node(self, node: Node) -> bool:
         try:
             node_subscriber = self.set_subscriber(node.address, self.broadcast_nodes_port)

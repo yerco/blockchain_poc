@@ -25,6 +25,31 @@ class KafkaPeerToPeer(PeerToPeer):
         self.transaction_subscriber = self.set_subscriber(group=group, topic='transaction')
         self.chain_subscriber = self.set_subscriber(group=group, topic='chain')
 
+    def bootstrap(self, *args, **kwargs):
+        blockchain = Blockchain(self.app)
+        first_node = Node(address=self.app.config['FIRST_NODE'])
+        this_node = Node(address=self.app.config['THIS_NODE'])
+        if first_node.address != this_node.address:
+            # get the genesis block
+            if not Block.query.all():
+                response = blockchain.get_blocks_from(first_node, 1)
+                if response:
+                    try:
+                        genesis_block = Block()
+                        [setattr(genesis_block, key, response[key]) for key in response]
+                        db.session.add(genesis_block)
+                        db.session.commit()
+                        print('Genesis block added.')
+                    except SQLAlchemyError as e:
+                        print(f'Genesis block could not be added: ', e)
+                    except Exception as e:
+                        print(f'A problem occurred while adding the genesis block: ', e)
+        else:
+            if blockchain.create_genesis_block():
+                print('Genesis block created.')
+            else:
+                print('Genesis block already exists.')
+
     def subscribe_to_node(self, node: Node) -> bool:
         # all of them subscribe to a backbone in kafka
         return True
@@ -70,52 +95,54 @@ class KafkaPeerToPeer(PeerToPeer):
         else:
             try:
                 transaction = json.loads(event.value())
+                partition = event.partition()
+                print(f'Received: transaction {transaction} from partition {partition}')
+                if transaction['id'] != 'None':
+                    transaction_id = transaction['id']
+                else:
+                    transactions = Transaction.query.all()
+                    transaction_id = len(transactions) + 1
+                received_public_key = transaction['public_key'].split(' ')
+                x = int(received_public_key[1].strip()[:-2], 16)
+                y = int(received_public_key[2].strip()[:-4], 16)
+                public_key = Point(x, y, curve=curve.secp256k1)
+                transaction_data_string = transaction['transaction_data_string'][2:-1]
+                signature = tuple(json.loads(transaction['signature']))
+                valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
+                # if we ratify the transaction sent is valid we store it in the database
+                if valid:
+                    transaction_db = Transaction()
+                    transaction_db.id = transaction_id
+                    transaction_db.public_key = public_key
+                    transaction_db.transaction_data_string = transaction_data_string
+                    transaction_db.signature = json.dumps(signature)
+                    transaction_db.valid = valid
+                    try:
+                        db.session.add(transaction_db)
+                        db.session.commit()
+                        print(f'Transaction: {transaction_id} added.')
+                        transactions = Transaction.query.all()
+                        if len(transactions) >= self.app.config['TRANSACTIONS_AMOUNT']:
+                            blockchain = Blockchain(self.app)
+                            # proof_work generates a new block
+                            new_block = blockchain.proof_of_work()
+                            db.session.add(new_block)
+                            db.session.commit()
+                            self.broadcast(self.publisher, blockchain.get_blocks_as_list_of_dict(), topic='chain')
+                            db.session.query(Transaction).delete()
+                            db.session.commit()
+                    except SQLAlchemyError as e:
+                        print(f'Transaction {transaction_id} could not be added: ', e)
+                        pass
+                    except Exception as e:
+                        print(f'A problem occurred at receiving transaction: ', e)
+                else:
+                    print(f'Transaction: {transaction_id} is not valid.')
             except json.decoder.JSONDecodeError as e:
                 # Handle the JSONDecodeError exception
                 print("Failed to decode JSON:", str(e))
-            partition = event.partition()
-            print(f'Received: transaction {transaction} from partition {partition}')
-            if transaction['id'] != 'None':
-                transaction_id = transaction['id']
-            else:
-                transactions = Transaction.query.all()
-                transaction_id = len(transactions) + 1
-            received_public_key = transaction['public_key'].split(' ')
-            x = int(received_public_key[1].strip()[:-2], 16)
-            y = int(received_public_key[2].strip()[:-4], 16)
-            public_key = Point(x, y, curve=curve.secp256k1)
-            transaction_data_string = transaction['transaction_data_string'][2:-1]
-            signature = tuple(json.loads(transaction['signature']))
-            valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
-            # if we ratify the transaction sent is valid we store it in the database
-            if valid:
-                transaction_db = Transaction()
-                transaction_db.id = transaction_id
-                transaction_db.public_key = public_key
-                transaction_db.transaction_data_string = transaction_data_string
-                transaction_db.signature = json.dumps(signature)
-                transaction_db.valid = valid
-                try:
-                    db.session.add(transaction_db)
-                    db.session.commit()
-                    print(f'Transaction: {transaction_id} added.')
-                    transactions = Transaction.query.all()
-                    if len(transactions) >= self.app.config['TRANSACTIONS_AMOUNT']:
-                        blockchain = Blockchain(self.app)
-                        # proof_work generates a new block
-                        new_block = blockchain.proof_of_work()
-                        db.session.add(new_block)
-                        db.session.commit()
-                        self.broadcast(self.publisher, blockchain.get_blocks_as_list_of_dict(), topic='chain')
-                        db.session.query(Transaction).delete()
-                        db.session.commit()
-                except SQLAlchemyError as e:
-                    print(f'Transaction {transaction_id} could not be added: ', e)
-                    pass
-                except Exception as e:
-                    print(f'A problem occurred at receiving transaction: ', e)
-            else:
-                print(f'Transaction: {transaction_id} is not valid.')
+            except Exception as e:
+                print(f'A problem occurred at receiving transaction: ', e)
 
     def receive_node(self):
         event = self.node_subscriber.poll(1.5)
@@ -156,39 +183,47 @@ class KafkaPeerToPeer(PeerToPeer):
         if event is None:
             # print("No event")
             pass
+        elif event.error():
+            print(f'Error: {event.error()}')
         else:
-            received_blocks = event.value()
-            partition = event.partition()
-            print(f'Received: chain {received_blocks} from partition {partition}')
-            stored_blocks = Block.query.all()
-            if isinstance(received_blocks, dict) and len(received_blocks) > len(stored_blocks):
-                # first we check the received blocks against what we already have
-                for i in range(len(received_blocks)):
-                    if stored_blocks:
-                        if stored_blocks[i].as_dict() != received_blocks[i]:
-                            print(f'Inconsistency in the chain received compared with the one we already have')
-                            # TODO: maybe discard
-                            continue
-                    try:
-                        # what we have is shorter than what we received
-                        num_blocks_deleted = db.session.query(Block).delete()
-                        print(f'Updating chain: {num_blocks_deleted} blocks deleted.')
-                        for block in received_blocks:
-                            new_block = Block()
-                            [setattr(new_block, key, block[key]) for key in block]
-                            db.session.add(new_block)
-                        db.session.commit()
-                        blockchain = Blockchain(self.app)
-                        print(f'Chain updated and broadcast.')
-                        self.broadcast(self.publisher, blockchain.get_blocks_as_list_of_dict(), topic='chain')
-                        # TODO: delete only required, here we are wiping out everything
-                        db.session.query(Transaction).delete()
-                        db.session.commit()
-                    except SQLAlchemyError as e:
-                        print(f'Chain could not be updated: ', e)
-                        db.session.rollback()
-                    except Exception as e:
-                        print(f'A problem occurred at receiving chain: ', e)
+            try:
+                received_blocks = event.value()
+                partition = event.partition()
+                print(f'Received: chain {received_blocks} from partition {partition}')
+                stored_blocks = Block.query.all()
+                if isinstance(received_blocks, dict) and len(received_blocks) > len(stored_blocks):
+                    # first we check the received blocks against what we already have
+                    for i in range(len(received_blocks)):
+                        if stored_blocks:
+                            if stored_blocks[i].as_dict() != received_blocks[i]:
+                                print(f'Inconsistency in the chain received compared with the one we already have')
+                                # TODO: maybe discard
+                                continue
+                        try:
+                            # what we have is shorter than what we received
+                            num_blocks_deleted = db.session.query(Block).delete()
+                            print(f'Updating chain: {num_blocks_deleted} blocks deleted.')
+                            for block in received_blocks:
+                                new_block = Block()
+                                [setattr(new_block, key, block[key]) for key in block]
+                                db.session.add(new_block)
+                            db.session.commit()
+                            blockchain = Blockchain(self.app)
+                            print(f'Chain updated and broadcast.')
+                            self.broadcast(self.publisher, blockchain.get_blocks_as_list_of_dict(), topic='chain')
+                            # TODO: delete only required, here we are wiping out everything
+                            db.session.query(Transaction).delete()
+                            db.session.commit()
+                        except SQLAlchemyError as e:
+                            print(f'Chain could not be updated: ', e)
+                            db.session.rollback()
+                        except Exception as e:
+                            print(f'A problem occurred at receiving chain: ', e)
+            except json.decoder.JSONDecodeError as e:
+                # Handle the JSONDecodeError exception
+                print("Failed to decode JSON:", str(e))
+            except Exception as e:
+                print(f'A problem occurred at receiving chain: ', e)
 
     # this is useless but for testing
     def tester_spitter(self):
