@@ -2,6 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from flask import Flask
+from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 
 load_dotenv()
@@ -25,6 +26,7 @@ def create_app():
     app.register_blueprint(site_blueprint, url_prefix='/')
     from src.api import api_blueprint
     app.register_blueprint(api_blueprint)
+    CORS(app)
 
     # shell context for flask cli
     @app.shell_context_processor

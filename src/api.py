@@ -1,8 +1,9 @@
 import os
 
-from flask import Blueprint, request, current_app
-from flask_restx import Resource, Api, fields
 from fastecdsa.keys import import_key
+from flask import Blueprint, request, current_app
+from flask_cors import CORS
+from flask_restx import Resource, Api, fields
 from http import HTTPStatus
 
 from src.models import Block, Node, Transaction
@@ -12,6 +13,7 @@ from src.zmq_peer_to_peer import create_zmq
 
 api_blueprint = Blueprint('api', __name__)
 api = Api(api_blueprint)
+cors = CORS(api_blueprint, resources={r"*": {"origins": "*"}})
 
 FactoryPeerToPeer.register('zmq', create_zmq)
 FactoryPeerToPeer.register('kafka', create_kafka)
@@ -72,6 +74,18 @@ class TransactionsList(Resource):
 api.add_resource(TransactionsList, '/transactions')
 
 
+class Transactions(Resource):
+
+    @api.marshal_with(transaction_model)
+    def get(self, transaction_id):
+        block = Transaction.query.filter_by(id=transaction_id).first()
+        if not block:
+            api.abort(HTTPStatus.NOT_FOUND, f'Transaction {transaction_id} not found')
+        return block, HTTPStatus.OK
+
+
+api.add_resource(Transactions, '/transactions/<int:transaction_id>')
+
 # node resource
 node_model = api.model('Node', {
     'id': fields.Integer(readOnly=True),
@@ -109,7 +123,7 @@ api.add_resource(NodesList, '/nodes')
 
 
 # node resource
-block_model = api.model('Node', {
+block_model = api.model('Block', {
     'id': fields.Integer(readOnly=True),
     'prev_hash': fields.String(required=True),
     'nonce': fields.Integer(required=True),
