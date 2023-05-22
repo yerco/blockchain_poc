@@ -42,6 +42,14 @@ curl --header "Content-Type: application/json" \
 ```
 * There are more endpoints (check).
 
+If you don't want to use `curl` or a similar alternative there's a basic frontend:
+```bash
+$ cd frontend
+$ npm install
+$ npm start
+```
+Then go to http://<your-host>:3000/
+
 ## ZMQ
 Set the value `COMM = 'zmq'`, all the nodes are stored in the DB.
 The problem of a node being down has not being solved.
