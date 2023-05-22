@@ -25,9 +25,34 @@ class KafkaPeerToPeer(PeerToPeer):
         self.transaction_subscriber = self.set_subscriber(group=group, topic='transaction')
         self.chain_subscriber = self.set_subscriber(group=group, topic='chain')
 
+    def bootstrap(self, *args, **kwargs):
+        blockchain = Blockchain(self.app)
+        first_node = Node(address=self.app.config['FIRST_NODE'])
+        this_node = Node(address=self.app.config['THIS_NODE'])
+        if first_node.address != this_node.address:
+            # get the genesis block
+            if not Block.query.all():
+                response = blockchain.get_blocks_from(first_node, 1)
+                if response:
+                    try:
+                        genesis_block = Block()
+                        [setattr(genesis_block, key, response[key]) for key in response]
+                        db.session.add(genesis_block)
+                        db.session.commit()
+                        print('Genesis block added.')
+                    except SQLAlchemyError as e:
+                        print(f'Genesis block could not be added: ', e)
+                    except Exception as e:
+                        print(f'A problem occurred while adding the genesis block: ', e)
+        else:
+            if blockchain.create_genesis_block():
+                print('Genesis block created.')
+            else:
+                print('Genesis block already exists.')
+
     def subscribe_to_node(self, node: Node) -> bool:
         # all of them subscribe to a backbone in kafka
-        pass
+        return True
 
     def set_publisher(self):
         return Producer({
@@ -52,7 +77,7 @@ class KafkaPeerToPeer(PeerToPeer):
         print(f'Broadcasting {data} to {topic}')
         publisher.produce(topic, key="key1", value=json.dumps(data), callback=self.acked)
         publisher.poll(1)
-        publisher.flush()
+        # publisher.flush()
 
     def acked(self, err, msg):
         if err is not None:
@@ -61,16 +86,22 @@ class KafkaPeerToPeer(PeerToPeer):
             print("Message produced: %s" % (str(msg)))
 
     def receive_transaction(self):
-        with self.app.app_context():
-            event = self.transaction_subscriber.poll(1.5)
-            if event is None:
-                # print("No event")
-                pass
-            else:
+        event = self.transaction_subscriber.poll(1)
+        if event is None:
+            # print("No event")
+            pass
+        elif event.error():
+            print(f'Error: {event.error()}')
+        else:
+            try:
                 transaction = json.loads(event.value())
                 partition = event.partition()
                 print(f'Received: transaction {transaction} from partition {partition}')
-                transaction_id = transaction['id']
+                if transaction['id'] != 'None':
+                    transaction_id = transaction['id']
+                else:
+                    transactions = Transaction.query.all()
+                    transaction_id = len(transactions) + 1
                 received_public_key = transaction['public_key'].split(' ')
                 x = int(received_public_key[1].strip()[:-2], 16)
                 y = int(received_public_key[2].strip()[:-4], 16)
@@ -107,54 +138,60 @@ class KafkaPeerToPeer(PeerToPeer):
                         print(f'A problem occurred at receiving transaction: ', e)
                 else:
                     print(f'Transaction: {transaction_id} is not valid.')
+            except json.decoder.JSONDecodeError as e:
+                # Handle the JSONDecodeError exception
+                print("Failed to decode JSON:", str(e))
+            except Exception as e:
+                print(f'A problem occurred at receiving transaction: ', e)
 
     def receive_node(self):
-        with self.app.app_context():
-            event = self.node_subscriber.poll(1.5)
-            if event is None:
-                # print("No event")
-                pass
-            else:
-                node = json.loads(event.value())
-                if type(node) == str:
-                    node = json.loads(node)
-                partition = event.partition()
-                print(f'Received: node {node} from partition {partition}')
-                # consumer.commit(event)
-                received_node = Node(address=node['address'])
-                if node['id']:
-                    received_node.id = node['id']
-                try:
-                    existing_node = Node.query.filter_by(address=received_node.address).all()
-                    if len(existing_node) >= 1:
-                        print(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
-                        pass
+        event = self.node_subscriber.poll(1.5)
+        if event is None:
+            # print("No event")
+            pass
+        else:
+            node = json.loads(event.value())
+            if type(node) == str:
+                node = json.loads(node)
+            partition = event.partition()
+            print(f'Received: node {node} from partition {partition}')
+            # consumer.commit(event)
+            received_node = Node(address=node['address'])
+            if node['id']:
+                received_node.id = node['id']
+            try:
+                existing_node = Node.query.filter_by(address=received_node.address).all()
+                if len(existing_node) >= 1:
+                    print(f'Broadcast node: there is at least one node with the same address: {received_node.address}')
+                    pass
+                else:
+                    if received_node.id and received_node.id != 'None':
+                        db.session.add(received_node)
+                        db.session.commit()
+                        print(f'Node: {received_node.id}, {received_node.address} added.')
                     else:
-                        if received_node.id and received_node.id != 'None':
-                            db.session.add(received_node)
-                            db.session.commit()
-                            print(f'Node: {received_node.id}, {received_node.address} added.')
-                        else:
-                            print(f'{self.app.config["THIS_NODE"]} did not receive an ID from {received_node.address}')
-                except SQLAlchemyError as e:
-                    # TODO make it more elegant instead of just spit the exception
-                    print(f'Node {received_node.id}, {received_node.address} could not be added: ', e)
-                    db.session.rollback()
-                except Exception as e:
-                    print(f'A problem occurred at receiving node: ', e)
+                        print(f'{self.app.config["THIS_NODE"]} did not receive an ID from {received_node.address}')
+            except SQLAlchemyError as e:
+                # TODO make it more elegant instead of just spit the exception
+                print(f'Node {received_node.id}, {received_node.address} could not be added: ', e)
+                db.session.rollback()
+            except Exception as e:
+                print(f'A problem occurred at receiving node: ', e)
 
     def receive_chain(self):
-        with self.app.app_context():
-            event = self.chain_subscriber.poll(1.5)
-            if event is None:
-                # print("No event")
-                pass
-            else:
+        event = self.chain_subscriber.poll(1.5)
+        if event is None:
+            # print("No event")
+            pass
+        elif event.error():
+            print(f'Error: {event.error()}')
+        else:
+            try:
                 received_blocks = event.value()
                 partition = event.partition()
                 print(f'Received: chain {received_blocks} from partition {partition}')
                 stored_blocks = Block.query.all()
-                if len(received_blocks) > len(stored_blocks):
+                if isinstance(received_blocks, dict) and len(received_blocks) > len(stored_blocks):
                     # first we check the received blocks against what we already have
                     for i in range(len(received_blocks)):
                         if stored_blocks:
@@ -182,6 +219,11 @@ class KafkaPeerToPeer(PeerToPeer):
                             db.session.rollback()
                         except Exception as e:
                             print(f'A problem occurred at receiving chain: ', e)
+            except json.decoder.JSONDecodeError as e:
+                # Handle the JSONDecodeError exception
+                print("Failed to decode JSON:", str(e))
+            except Exception as e:
+                print(f'A problem occurred at receiving chain: ', e)
 
     # this is useless but for testing
     def tester_spitter(self):

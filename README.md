@@ -29,7 +29,7 @@ CREATE DATABASE flaskchain_test;
 ```
 
 ```bash
-(env)$ python manage.py run -h 0.0.0.0
+(env)$ python manage.py run -h 0.0.0.0 --no-debug
 ```
 Note: at `utilities.py`::`generate_key_pair` can be used to generate a key pair.
 
@@ -42,11 +42,29 @@ curl --header "Content-Type: application/json" \
 ```
 * There are more endpoints (check).
 
+## ZMQ
+Set the value `COMM = 'zmq'`, all the nodes are stored in the DB.
+The problem of a node being down has not being solved.
+All the nodes establish connections among them.
+
+## Kafka (with Zookeeper)
+
+At config set the value `COMM = 'kafka'`. You need to create the topics `transaction`, `chain` and `node` (this last
+one is not relevant for kafka at this point), ex:
+```bash
+$ kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 2 --partitions 3 --topic transaction
+```
+
+You can produce transactions using the API (see `curl` example above) or using a producer, ex:
+```bash
+$ kafka-console-producer.sh --broker-list localhost:9092 --topic transaction
+```
+
 ## TODOs
 - This is a newly born WIP, so many things to do.
 - Solve transaction conflict resolution problems.
-- More test needed most of the existing ones are **flaky** ![](https://www.jetbrains.com/teamcity/ci-cd-guide/concepts/flaky-tests/)
-- Related with the previous issue, Kafka tests need the services running, find a way to make it solid.
+- More test needed most of the existing ones are **flaky** do not trust them they are not by any chance a good example.
+- Related with the previous issue, Kafka tests need the services running, will find a way to make it solid.
 
 ### Bonus track: Primitive CI/CD explained in the video
 ```bash

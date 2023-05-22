@@ -9,6 +9,10 @@ class PeerToPeer(ABC):
         self.app = app
 
     @abstractmethod
+    def bootstrap(self, *args, **kwargs):
+        raise NotImplementedError
+
+    @abstractmethod
     def subscribe_to_node(self, node: Node) -> bool:
         raise NotImplementedError
 

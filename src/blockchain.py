@@ -62,6 +62,7 @@ class Blockchain:
                 block.encode_block()
                 new_hash = hashlib.sha256(json.dumps(block.as_dict(), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
+        print(f'\n\n\nNew block mined: {new_hash}\n\n\n')
         block.hash = new_hash
         return block
 
