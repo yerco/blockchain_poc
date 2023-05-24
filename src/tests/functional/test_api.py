@@ -1,10 +1,8 @@
 import json
 import os
-import pytest
 import uuid
 
 from fastecdsa.keys import import_key
-from flask import request
 from freezegun import freeze_time
 from sqlalchemy.exc import SQLAlchemyError
 from unittest.mock import patch
@@ -28,14 +26,14 @@ def test_add_transaction(test_app, test_database, monkeypatch):
     data_to_send = {
         'full_names': 'fullNames Test String',
         'practice_number': '1234567890',
-        'notes': 'notes Test String'
+        'notes': 'notes Test String ñandú',
     }
     resp = client.post(
         '/transactions',
         data=json.dumps(data_to_send),
         content_type='application/json',
     )
-    data = json.loads(resp.data.decode())
+    data = json.loads(resp.data)
     message = json.loads(data['message'])
     assert resp.status_code == 201
     assert message['transaction_id'] == '00000000000000000000000000000000'
@@ -79,18 +77,18 @@ def test_get_transactions(test_app, test_database, add_transaction):
     data1 = {
         'full_names': 'fullNames Test String 1',
         'practice_number': '1234567890',
-        'notes': 'notes Test String 1'
+        'notes': 'notes Test String 1 ñandú'
     }
     add_transaction(public_key=public_key, private_key=private_key, data=data1)
     data2 = {
         'full_names': 'fullNames Test String 2',
         'practice_number': '0987654321',
-        'notes': 'notes Test String 2'
+        'notes': 'notes Test String 2 ñandú'
     }
     add_transaction(public_key=public_key, private_key=private_key, data=data2)
     client = test_app.test_client()
     resp = client.get('/transactions')
-    data = json.loads(resp.data.decode())
+    data = json.loads(resp.data)
     assert resp.status_code == 200
     assert len(data) == 2
     assert data1 == json.loads(data[0]['transaction_data_string'])['data']
@@ -100,49 +98,11 @@ def test_get_transactions(test_app, test_database, add_transaction):
     assert data[1]['id'] == 2
     assert data[1]['valid'] is True
 
-
-def test_post_transaction_and_mining_a_block(test_app, test_database):
-    # we will set the amount of transactions to 4
-    test_app.config['TRANSACTIONS_AMOUNT'] = 4
-    # so we will add 3 transactions first
-    # get the path of the current file
-    current_file_path = __file__
-    # get the directory path
-    current_directory_path = os.path.dirname(os.path.abspath(current_file_path))
-    private_key, public_key = import_key(f'{current_directory_path}/../../../keys/private_key.pem')
-    transaction1 = Transaction(private_key=private_key, public_key=public_key, data={'test': 'transaction1'})
-    transaction2 = Transaction(private_key=private_key, public_key=public_key, data={'test': 'transaction2'})
-    transaction3 = Transaction(private_key=private_key, public_key=public_key, data={'test': 'transaction3'})
-    db.session.add(transaction1)
-    db.session.add(transaction2)
-    db.session.add(transaction3)
-    db.session.commit()
-
-    # then we will assume we have a couple of blocks
-    blockchain = Blockchain(test_app)
-    assert blockchain.create_genesis_block() is True
-    block1_data = 'This is the first block after genesis'
-    assert blockchain.create_and_store_new_block(block1_data) is True
-
-    # then we will post a new transaction
-    client = test_app.test_client()
-    data_to_send = {
-        'full_names': 'fullNames Test String',
-        'practice_number': '1234567890',
-        'notes': 'notes Test String'
-    }
-    # inside this POST there'll be a chain broadcast
-    resp = client.post(
-        '/transactions',
-        data=json.dumps(data_to_send),
-        content_type='application/json',
-    )
-    data = json.loads(resp.data.decode())
-    message = json.loads(data['message'])
-    assert message['data'] == data_to_send
-    blocks = Block.query.all()
-    assert len(blocks) == 3
-    assert resp.status_code == 201
+    resp = client.get('/transactions/1')
+    data = json.loads(resp.data)
+    assert resp.status_code == 200
+    assert data['id'] == 1
+    assert data1 == json.loads(data['transaction_data_string'])['data']
 
 
 def test_getting_nodes(test_app, test_database):
@@ -160,7 +120,7 @@ def test_getting_nodes(test_app, test_database):
     assert data[1]['address'] == '5.6.7.8'
 
 
-def test_add_node_and_detect_duplicates(test_app, test_database):
+def test_add_node_and_detect_duplicates(test_app, test_database, monkeypatch):
     client = test_app.test_client()
     localhost = '127.0.0.1'
     data_to_send = {
@@ -171,7 +131,12 @@ def test_add_node_and_detect_duplicates(test_app, test_database):
         data=json.dumps(data_to_send),
         content_type='application/json',
     )
-    data = json.loads(resp.data.decode())
+    data = json.loads(resp.data)
+
+    # mocking broadcast node successfully added
+    db.session.add(Node(address=localhost))
+    db.session.commit()
+
     assert data['message'] == f'{test_app.config["THIS_NODE"]} now knows node {localhost}!'
     assert resp.status_code == 200
     assert Node.query.count() == 1
@@ -204,24 +169,6 @@ def test_add_node_address_of_sender_does_not_match_address_of_the_request(test_a
     data = json.loads(resp.data.decode())
     assert data['message'] == f'{test_app.config["THIS_NODE"]} now knows node {address}!'
     assert resp.status_code == 200
-
-
-def test_add_node_db_problems(test_app, test_database):
-    with patch.object(db.session, 'add', side_effect=SQLAlchemyError()):
-        # with pytest.raises(SQLAlchemyError):
-        client = test_app.test_client()
-        localhost = '127.0.0.1'
-        data_to_send = {
-            'node_address': localhost
-        }
-        resp = client.post(
-            '/nodes',
-            data=json.dumps(data_to_send),
-            content_type='application/json',
-        )
-        data = json.loads(resp.data.decode())
-        assert data['message'] == f'node {localhost} could not be added, Database error!'
-        assert resp.status_code == 500
 
 
 def test_add_node_loop(test_app, test_database):

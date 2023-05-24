@@ -74,7 +74,7 @@ class KafkaPeerToPeer(PeerToPeer):
             print(f'Assigned to {p.topic}, partition {p.partition}')
 
     def broadcast(self, publisher, data, topic):
-        print(f'Broadcasting {data} to {topic}')
+        print(f'Broadcasting {data} to topic {topic}')
         publisher.produce(topic, key="key1", value=json.dumps(data), callback=self.acked)
         publisher.poll(1)
         # publisher.flush()
@@ -106,7 +106,7 @@ class KafkaPeerToPeer(PeerToPeer):
                 x = int(received_public_key[1].strip()[:-2], 16)
                 y = int(received_public_key[2].strip()[:-4], 16)
                 public_key = Point(x, y, curve=curve.secp256k1)
-                transaction_data_string = transaction['transaction_data_string'][2:-1]
+                transaction_data_string = transaction['transaction_data_string']
                 signature = tuple(json.loads(transaction['signature']))
                 valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
                 # if we ratify the transaction sent is valid we store it in the database
@@ -144,6 +144,7 @@ class KafkaPeerToPeer(PeerToPeer):
             except Exception as e:
                 print(f'A problem occurred at receiving transaction: ', e)
 
+    # In kafka apparently we don't need to track nodes
     def receive_node(self):
         event = self.node_subscriber.poll(1.5)
         if event is None:

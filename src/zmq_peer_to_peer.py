@@ -42,14 +42,14 @@ class ZMQPeerToPeer(PeerToPeer):
         blockchain = Blockchain(self.app)
         first_node = Node(address=self.app.config['FIRST_NODE'])
         this_node = Node(address=self.app.config['THIS_NODE'])
-        blockchain.add_node(this_node)
+        self.add_node(this_node)
         self.subscribe_to_node(this_node)
         if first_node.address != this_node.address:
-            blockchain.add_node(first_node)
+            self.add_node(first_node)
             if self.subscribe_to_node(first_node) is False:
                 # maybe wipe out the node table?
-                blockchain.remove_node(first_node)
-                blockchain.remove_node(this_node)
+                self.remove_node(first_node)
+                self.remove_node(this_node)
                 print('Could not subscribe to first node, find another alternative as first node.')
                 exit(0)
             # here this node informs the first node that it exists
@@ -67,7 +67,7 @@ class ZMQPeerToPeer(PeerToPeer):
                         _node = Node(address=node['address'])
                         _node.id = node['id']
                         self.subscribe_to_node(_node)
-                        blockchain.add_node(_node)
+                        self.add_node(_node)
 
                     # at least get a genesis block
                     if not Block.query.all():
@@ -160,7 +160,7 @@ class ZMQPeerToPeer(PeerToPeer):
                     x = int(received_public_key[1].strip()[:-2], 16)
                     y = int(received_public_key[2].strip()[:-4], 16)
                     public_key = Point(x, y, curve=curve.secp256k1)
-                    transaction_data_string = transaction['transaction_data_string'][2:-1]
+                    transaction_data_string = transaction['transaction_data_string']
                     signature = tuple(json.loads(transaction['signature']))
                     valid = ecdsa.verify(signature, str(transaction_data_string), public_key, curve.secp256k1, ecdsa.sha256)
                     # if we ratify the transaction sent is valid we store it in the database
@@ -279,6 +279,53 @@ class ZMQPeerToPeer(PeerToPeer):
             print(f"ZMQError at receiving chain: {e}")
         except Exception as e:
             print(f'A problem occurred receiving chain: ', e)
+
+    def add_node(self, node: Node) -> bool:
+        if node.address != self.app.config['THIS_NODE']:
+            try:
+                nodes = Node.query.all()
+                for _node in nodes:
+                    if _node.address == node.address:
+                        print(f'Node: {node.id}, {node.address} already exists in {self.app.config["THIS_NODE"]}.')
+                        return False
+                id_taker = Node.query.filter_by(id=node.id).first()
+                if id_taker is not None:
+                    node.id = len(nodes) + 1
+                db.session.add(node)
+                db.session.commit()
+                print(f'Node: {node.id}, {node.address} has been added in {self.app.config["THIS_NODE"]}.')
+                return True
+            except SQLAlchemyError as e:
+                print(f'Node {node} could not be added: ', e)
+                return False
+            except Exception as e:
+                print(f'A problem occurred while adding node {node}: ', e)
+                return False
+        else:
+            # node could have been reset (it still at the database)
+            nodes = Node.query.all()
+            for _node in nodes:
+                if _node.address == node.address:
+                    print(f'Node: {node.id}, {node.address} already exists in {self.app.config["THIS_NODE"]}.')
+                    return False
+            # adding THIS node to the database
+            db.session.add(node)
+            db.session.commit()
+            print(f'THIS node: {node.id}, {node.address} added to itself DB.')
+            return True
+
+    def remove_node(self, node: Node) -> bool:
+        try:
+            db.session.delete(node)
+            db.session.commit()
+            print(f'Node: {node.id}, {node.address} has been removed from {self.app.config["THIS_NODE"]}.')
+            return True
+        except SQLAlchemyError as e:
+            print(f'Node {node} could not be removed: ', e)
+            return False
+        except Exception as e:
+            print(f'A problem occurred while removing node {node}: ', e)
+            return False
 
     # this is useless but for testing
     def tester_spitter(self):

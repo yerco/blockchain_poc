@@ -40,7 +40,12 @@ class App extends Component {
         this.toggle();
         axios
         .post("http://localhost:8888/transactions", item)
-        .then(res => this.refreshTransactionsList());
+        .then(res => {
+            this.refreshTransactionsList();
+            window.location.reload();
+        }).catch(error => {
+            console.log("POST problems ", error)
+        });
     }
 
     createItem = () => {

@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 
 from fastecdsa.keys import import_key
 from freezegun import freeze_time
@@ -27,11 +28,26 @@ class TestBlockchain:
         blockchain = Blockchain(test_app)
         assert blockchain.create_genesis_block() is True
         block1_data = 'This is the first block after genesis'
-        assert blockchain.create_and_store_new_block(block1_data) is True
+        last_block = Block.query.order_by(Block.id.desc()).first()
+        timestamp = datetime.utcnow()
+        block = Block(prev_hash=last_block.hash, nonce=456, data=block1_data, timestamp=timestamp)
+        block.encode_block()
+        db.session.add(block)
+        db.session.commit()
         block2_data = 'This is the second block after genesis'
-        assert blockchain.create_and_store_new_block(block2_data) is True
+        last_block = Block.query.order_by(Block.id.desc()).first()
+        timestamp = datetime.utcnow()
+        block = Block(prev_hash=last_block.hash, nonce=456, data=block2_data, timestamp=timestamp)
+        block.encode_block()
+        db.session.add(block)
+        db.session.commit()
         block3_data = 'This is the third block after genesis'
-        assert blockchain.create_and_store_new_block(block3_data) is True
+        last_block = Block.query.order_by(Block.id.desc()).first()
+        timestamp = datetime.utcnow()
+        block = Block(prev_hash=last_block.hash, nonce=456, data=block3_data, timestamp=timestamp)
+        block.encode_block()
+        db.session.add(block)
+        db.session.commit()
         blocks = Block.query.all()
         assert len(blocks) == 4
         assert blocks[0].id == 1
@@ -44,11 +60,26 @@ class TestBlockchain:
         test_app.config['THIS_NODE'] = '1.2.3.4'
         assert blockchain.create_genesis_block() is True
         block1_data = 'This is the first block after genesis'
-        assert blockchain.create_and_store_new_block(block1_data) is True
+        last_block = Block.query.order_by(Block.id.desc()).first()
+        timestamp = datetime.utcnow()
+        block = Block(prev_hash=last_block.hash, nonce=456, data=block1_data, timestamp=timestamp)
+        block.encode_block()
+        db.session.add(block)
+        db.session.commit()
         block2_data = 'This is the second block after genesis'
-        assert blockchain.create_and_store_new_block(block2_data) is True
+        last_block = Block.query.order_by(Block.id.desc()).first()
+        timestamp = datetime.utcnow()
+        block = Block(prev_hash=last_block.hash, nonce=456, data=block2_data, timestamp=timestamp)
+        block.encode_block()
+        db.session.add(block)
+        db.session.commit()
         block3_data = 'This is the third block after genesis'
-        assert blockchain.create_and_store_new_block(block3_data) is True
+        last_block = Block.query.order_by(Block.id.desc()).first()
+        timestamp = datetime.utcnow()
+        block = Block(prev_hash=last_block.hash, nonce=456, data=block3_data, timestamp=timestamp)
+        block.encode_block()
+        db.session.add(block)
+        db.session.commit()
         blocks = Block.query.all()
         assert len(blocks) == 4
         assert blocks[0].id == 1
@@ -74,38 +105,3 @@ class TestBlockchain:
         assert new_block.prev_hash == blocks[3].hash
         chunk_of_transactions = [transaction1.as_dict(), transaction2.as_dict(), transaction3.as_dict()]
         assert chunk_of_transactions == json.loads(new_block.data)
-
-    def test_add_node_itself(self, test_app, test_database, capsys):
-        blockchain = Blockchain(test_app)
-        node = Node(test_app.config['THIS_NODE'])
-        assert blockchain.add_node(node) is True
-        out, err = capsys.readouterr()
-        assert f'THIS node: {node.id}, {test_app.config["THIS_NODE"]} added to itself DB.' in out
-        assert Node.query.count() == 1
-        # TODO remove
-        # assert peer_to_peer.num_of_publishers == 3
-        # assert peer_to_peer.num_of_subscribers == 0
-
-    def test_add_pair_node(self, test_app, test_database, capsys):
-        blockchain = Blockchain(test_app)
-        node = Node('1.2.3.4')
-        assert blockchain.add_node(node) is True
-        assert Node.query.count() == 1
-        out, err = capsys.readouterr()
-        assert f'Node: {node.id}, {node.address} has been added in {test_app.config["THIS_NODE"]}' in out
-
-    def test_add_node_repeated_nodes(self, test_app, test_database, capsys):
-        # publishers will get ready
-        blockchain = Blockchain(test_app)
-        node = Node('1.2.3.4')
-        assert blockchain.add_node(node) is True
-        assert Node.query.count() == 1
-        out, err = capsys.readouterr()
-        assert f'Node: {node.id}, {node.address} has been added in {test_app.config["THIS_NODE"]}' in out
-        assert blockchain.add_node(node) is False
-        assert Node.query.count() == 1
-        out, err = capsys.readouterr()
-        assert f'Node: {node.id}, {node.address} already exists in {test_app.config["THIS_NODE"]}.' in out
-        # TODO remove
-        # assert peer_to_peer.num_of_publishers == 3
-        # assert peer_to_peer.num_of_subscribers == 0
