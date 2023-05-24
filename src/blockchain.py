@@ -29,15 +29,6 @@ class Blockchain:
             return False
         return False
 
-    def create_and_store_new_block(self, data: str) -> bool:
-        last_block = Block.query.order_by(Block.id.desc()).first()
-        timestamp = datetime.utcnow()
-        block = Block(prev_hash=last_block.hash, nonce=456, data=data, timestamp=timestamp)
-        block.encode_block()
-        db.session.add(block)
-        db.session.commit()
-        return True
-
     def proof_of_work(self) -> Block:
         verified_transactions = []
         transactions = Transaction.query.all()
@@ -86,52 +77,6 @@ class Blockchain:
         else:
             print('Something nasty happened.')
             return None
-
-    def add_node(self, node: Node) -> bool:
-        if node.address != self.app.config['THIS_NODE']:
-            try:
-                nodes = Node.query.all()
-                for _node in nodes:
-                    if _node.address == node.address:
-                        print(f'Node: {node.id}, {node.address} already exists in {self.app.config["THIS_NODE"]}.')
-                        return False
-                id_taker = Node.query.filter_by(id=node.id).first()
-                if id_taker is not None:
-                    node.id = len(nodes) + 1
-                db.session.add(node)
-                db.session.commit()
-                print(f'Node: {node.id}, {node.address} has been added in {self.app.config["THIS_NODE"]}.')
-                return True
-            except SQLAlchemyError as e:
-                print(f'Node {node} could not be added: ', e)
-                return False
-            except Exception as e:
-                print(f'A problem occurred while adding node {node}: ', e)
-                return False
-        else:
-            # node could have been reset (it still at the database)
-            nodes = Node.query.all()
-            for _node in nodes:
-                if _node.address == node.address:
-                    print(f'Node: {node.id}, {node.address} already exists in {self.app.config["THIS_NODE"]}.')
-                    return False
-            # adding THIS node to the database
-            db.session.add(node)
-            db.session.commit()
-            print(f'THIS node: {node.id}, {node.address} added to itself DB.')
-            return True
-
-    def remove_node(self, node: Node) -> bool:
-        try:
-            db.session.delete(node)
-            db.session.commit()
-            print(f'Node: {node.id}, {node.address} has been removed from {self.app.config["THIS_NODE"]}.')
-            return True
-        except SQLAlchemyError as e:
-            print(f'Node {node} could not be removed: ', e)
-            return False
-        except Exception as e:
-            print(f'A problem occurred while removing node {node}: ', e)
 
     def add_node_at(self, target_node: Node, new_node: Node) -> bool:
         url = f'http://{target_node.address}:{self.app.config["FLASK_RUN_PORT"]}/nodes'

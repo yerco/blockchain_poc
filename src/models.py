@@ -63,7 +63,7 @@ class Transaction(db.Model):
         else:
             self.public_key = public_key
             transaction_data_dictionary = self.create_transaction_data_dictionary(data, datetime.utcnow())
-            self.transaction_data_string = json.dumps(transaction_data_dictionary, sort_keys=True).encode()
+            self.transaction_data_string = json.dumps(transaction_data_dictionary, sort_keys=True)
             signature = ecdsa.sign(self.transaction_data_string, private_key, curve=curve.secp256k1,
                                    hashfunc=ecdsa.sha256)
             self.signature = json.dumps(signature)

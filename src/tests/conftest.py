@@ -1,9 +1,14 @@
+import os
+import signal
+
 import pytest
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 from src import create_app, db
+from src.kafka_peer_to_peer import KafkaPeerToPeer
 from src.models import Transaction, Node
+from src.zmq_peer_to_peer import ZMQPeerToPeer
 
 
 @pytest.fixture(scope='function')
@@ -40,3 +45,21 @@ def add_node():
         db.session.commit()
         return node
     return _add_node
+
+
+@pytest.fixture(scope='function')
+def test_kafka_peer_to_peer():
+    app = create_app()
+    app.config.from_object('src.config.TestingConfig')
+    with app.app_context():
+        peer_to_peer = KafkaPeerToPeer(app)
+        yield peer_to_peer
+
+
+@pytest.fixture(scope='function')
+def test_zmq_peer_to_peer():
+    app = create_app()
+    app.config.from_object('src.config.TestingConfig')
+    with app.app_context():
+        peer_to_peer = ZMQPeerToPeer(app)
+        yield peer_to_peer

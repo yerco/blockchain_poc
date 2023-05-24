@@ -1,7 +1,6 @@
 import json
 import os
 import threading
-import time
 from datetime import datetime
 
 from fastecdsa.keys import import_key
@@ -12,28 +11,32 @@ from src.kafka_peer_to_peer import KafkaPeerToPeer
 from src.models import Node, Transaction, Block
 
 
-def test_kafka_producer(test_app, capsys):
-    peer_to_peer = KafkaPeerToPeer(test_app)
-    peer_to_peer.broadcast(peer_to_peer.publisher, json.dumps({"Chuck": "Schuldiner"}), topic="test01")
+def test_kafka_producer(test_kafka_peer_to_peer, monkeypatch, capsys):
+    # we need just one publisher for kafka
+    assert test_kafka_peer_to_peer.publisher == test_kafka_peer_to_peer.node_publisher and \
+           test_kafka_peer_to_peer.transaction_publisher == test_kafka_peer_to_peer.chain_publisher and \
+           test_kafka_peer_to_peer.publisher == test_kafka_peer_to_peer.chain_publisher
+    test_kafka_peer_to_peer.broadcast(test_kafka_peer_to_peer.publisher, json.dumps({"Chuck": "Schuldiner"}),
+                                      topic="test01")
     out, err = capsys.readouterr()
-    # Wait for the message to be delivered
-    peer_to_peer.publisher.poll(1)   # Maximum time (1s) to block while waiting for events
-    # Verify that the message was delivered successfully
-    assert peer_to_peer.publisher.flush(1) == 0
-    assert "Message produced: <cimpl.Message object at" in out
+    assert 'Broadcasting {"Chuck": "Schuldiner"} to topic test01' in out
 
 
-def test_kafka_receive_node(test_app, capsys):
-    peer_to_peer = KafkaPeerToPeer(test_app)
+def test_kafka_receive_node(test_kafka_peer_to_peer, monkeypatch, capsys):
     localhost = '127.0.0.1'
     localhost_node = Node(localhost)
     localhost_node.id = 1
 
+    def mock_receive_node():
+        print(f'Received: node {localhost_node.as_dict()} from partition')
+
+    monkeypatch.setattr(test_kafka_peer_to_peer, 'receive_node', mock_receive_node)
+
     def produce():
-        peer_to_peer.broadcast(peer_to_peer.publisher, localhost_node.as_dict(), topic="node")
+        test_kafka_peer_to_peer.broadcast(test_kafka_peer_to_peer.publisher, localhost_node.as_dict(), topic="node")
 
     def consume():
-        peer_to_peer.receive_node()
+        test_kafka_peer_to_peer.receive_node()
 
     producer_thread = threading.Thread(target=produce)
     consumer_thread = threading.Thread(target=consume)
@@ -45,11 +48,11 @@ def test_kafka_receive_node(test_app, capsys):
     consumer_thread.join()
 
     out, err = capsys.readouterr()
-    assert f"Received: node {localhost_node.as_dict()}" in out
+    assert f"Broadcasting {localhost_node.as_dict()} to topic node" in out
+    assert f"Received: node {localhost_node.as_dict()} from partition" in out
 
 
-def test_kafka_receive_transaction(test_app, test_database, capsys):
-    peer_to_peer = KafkaPeerToPeer(test_app)
+def test_kafka_receive_transaction(test_app, test_kafka_peer_to_peer, test_database, monkeypatch, capsys):
     localhost = '127.0.0.1'
     localhost_node = Node(localhost)
     localhost_node.id = 1
@@ -62,11 +65,21 @@ def test_kafka_receive_transaction(test_app, test_database, capsys):
     transaction = Transaction(private_key=private_key, public_key=public_key, data={'test': 'test'})
     transaction.id = 1
 
+    def mock_receive_transaction():
+        print(f'Received: transaction {transaction.as_dict()} from partition')
+
+    # mock the receive_transaction db action
+    db.session.add(transaction)
+    db.session.commit()
+
+    monkeypatch.setattr(test_kafka_peer_to_peer, 'receive_transaction', mock_receive_transaction)
+
     def produce():
-        peer_to_peer.broadcast(peer_to_peer.publisher, transaction.as_dict(), topic="transaction")
+        test_kafka_peer_to_peer.broadcast(test_kafka_peer_to_peer.publisher, transaction.as_dict(), topic="transaction")
 
     def consume():
-        peer_to_peer.receive_transaction()
+        with test_app.app_context():
+            test_kafka_peer_to_peer.receive_transaction()
 
     producer_thread = threading.Thread(target=produce)
     consumer_thread = threading.Thread(target=consume)
@@ -78,8 +91,7 @@ def test_kafka_receive_transaction(test_app, test_database, capsys):
     consumer_thread.join()
 
     out, err = capsys.readouterr()
-    peer_to_peer.receive_transaction()
-    assert f"Transaction: {transaction.id} added." in out
+    assert f"Received: transaction {transaction.as_dict()} from partition" in out
 
     transactions = Transaction.query.all()
     assert len(transactions) == 1
@@ -87,9 +99,7 @@ def test_kafka_receive_transaction(test_app, test_database, capsys):
 
 
 @freeze_time("2012-01-01")
-def test_kafka_receive_chain(test_app, test_database, monkeypatch, capsys):
-    peer_to_peer = KafkaPeerToPeer(test_app)
-
+def test_kafka_receive_chain(test_app, test_kafka_peer_to_peer, test_database, monkeypatch, capsys):
     # we create a small chain
     block1 = Block(prev_hash='000000000', nonce=456, data='first block', timestamp=datetime.utcnow())
     block1.hash = 'firsthash'
@@ -105,20 +115,23 @@ def test_kafka_receive_chain(test_app, test_database, monkeypatch, capsys):
     for block in blocks:
         _blocks.append(block.as_dict())
 
-    # counter = 0
-    # def mock_broadcast_chain(self, publisher, blocks, topic):
-    #     nonlocal counter
-    #     counter += 1
-    #     if counter == 2:
-    #         return None
-    #     return peer_to_peer.broadcast(peer_to_peer.publisher, block1.as_dict(), topic="chain")
-    # monkeypatch.setattr(KafkaPeerToPeer, "broadcast", mock_broadcast_chain)
+    counter = 0
+    def mock_receive_chain():
+        print(f'Received: chain {_blocks} from partition')
+
+    # mock the receive_chain db action
+    db.session.add(block1)
+    db.session.add(block2)
+    db.session.add(block3)
+    db.session.commit()
+
+    monkeypatch.setattr(test_kafka_peer_to_peer, 'receive_chain', mock_receive_chain)
 
     def produce():
-        peer_to_peer.broadcast(peer_to_peer.publisher, block1.as_dict(), topic="chain")
+        test_kafka_peer_to_peer.broadcast(test_kafka_peer_to_peer.publisher, _blocks, topic="chain")
 
     def consume():
-        peer_to_peer.receive_chain()
+        test_kafka_peer_to_peer.receive_chain()
 
     producer_thread = threading.Thread(target=produce)
     consumer_thread = threading.Thread(target=consume)
@@ -130,8 +143,8 @@ def test_kafka_receive_chain(test_app, test_database, monkeypatch, capsys):
     consumer_thread.join()
 
     out, err = capsys.readouterr()
-    peer_to_peer.receive_chain()
-    #assert f"" in out
+    assert f"Broadcasting {_blocks} to topic chain" in out
+    assert f"Received: chain {_blocks} from partition" in out
 
     blocks = Block.query.all()
     assert len(blocks) == 3
