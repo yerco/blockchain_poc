@@ -7,9 +7,10 @@ from sqlalchemy.dialects.mysql import INTEGER
 from fastecdsa import ecdsa, curve
 
 from src import db
+from src.representations import ModelAsDictMixin
 
 
-class Block(db.Model):
+class Block(db.Model, ModelAsDictMixin):
 
     __tablename__ = 'block'
 
@@ -36,15 +37,12 @@ class Block(db.Model):
         new_hash = hashlib.sha256(json_string).hexdigest()
         self.hash = new_hash
 
-    def as_dict(self):
-        return {c.name: str(getattr(self, c.name)) for c in self.__table__.columns}
-
     def __repr__(self):
         return f'Block id: {self.id}, prev_hash: {self.prev_hash}, nonce: {self.nonce}, ' \
                f'timestamp: {self.timestamp}, hash: {self.hash}, data: {self.data}'
 
 
-class Transaction(db.Model):
+class Transaction(db.Model, ModelAsDictMixin):
     __tablename__ = 'transaction'
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -80,15 +78,12 @@ class Transaction(db.Model):
         transaction_data_dictionary["data"] = data
         return transaction_data_dictionary
 
-    def as_dict(self):
-        return {c.name: str(getattr(self, c.name)) for c in self.__table__.columns}
-
     def __repr__(self):
         return f'Transaction id: {self.id}, public_key: {self.public_key}, signature: {self.signature}, ' \
                f'transaction_data_dictionary: {self.transaction_data_string}'
 
 
-class Node(db.Model):
+class Node(db.Model, ModelAsDictMixin):
     __tablename__ = 'node'
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
@@ -96,9 +91,6 @@ class Node(db.Model):
 
     def __init__(self, address):
         self.address = address
-
-    def as_dict(self):
-        return {c.name: str(getattr(self, c.name)) for c in self.__table__.columns}
 
     def __repr__(self):
         return f'Node id: {self.id}, address: {self.address}'
